@@ -1,0 +1,7 @@
+*.user.toml
+support-report*.md
+GSuInput/
+reports/
+*.bak
+*.dmp
+backups/

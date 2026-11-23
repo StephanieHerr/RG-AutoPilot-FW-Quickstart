@@ -1,0 +1,194 @@
+Flyway Enterprise AI library - file 02 of 32
+Concepts - the two loops, vocabulary, project layout and which tool when
+Flyway reference library, October 2026. Generic guidance written for your AI assistant. It contains no data from your environment, and you shouldn't add any to these files.
+
+What this covers: The mental model every other file assumes: the author loop and the release loop, how a change moves through a script-package process compared with Flyway, the vocabulary, how a Flyway project looks on disk, and a "which tool when" map across Flyway Desktop, the Flyway CLI, GitHub Actions, SQL Compare, SQL Data Compare, SQL Prompt, Redgate Monitor and SQL projects (DACPAC) if you keep them during evaluation.
+
+Not in this file: Installing the tools (file 04), the three deployment approaches and moving off SQL projects (file 06), baselining (file 07), the authoring steps (file 08), several teams on one database (file 09), `flyway.toml` settings (file 10), pipelines (files 11 and 12), each Redgate tool in depth (file 19), designing each team's workflow (file 28), scenario playbooks for your estate (file 29), and ticketing (file 30).
+
+Contents:
+1. Two loops that never cross
+2. How a change moves: a script package versus Flyway
+3. Vocabulary
+4. Migration types and naming
+5. The schema model and the history table
+6. What a project looks like on disk
+7. Which tool when
+8. How several teams map onto this
+9. In daily use
+10. Limits
+11. Instructions for the AI assistant using this file
+
+## 1. Two loops that never cross
+
+Flyway splits database change into two loops.
+
+The author loop belongs to people (developers, database developers, DBAs authoring a change). You change your own development database, capture the change into the schema model, generate one versioned migration (and its undo, if your team uses them), review it and open a pull request. The author loop never touches test, uat or production.
+
+The release loop belongs to the pipeline. After a merge, the pipeline proves the migrations on a throwaway build database, runs code review and change reports, previews the deployment with a dry run, then promotes the same migrations from environment to environment with approvals, a drift check before deploying and a snapshot after. The release loop never authors anything.
+
+Most confusion comes from mixing the two: deploying from a workstation, hand-editing a script on a server, or a pipeline step that generates SQL nobody reviewed. Place every question on a loop first.
+
+| What someone says | Loop | Start with |
+| --- | --- | --- |
+| "Desktop shows changes I didn't make" | Author | Files 08 and 23 |
+| "The deploy to uat failed" | Release | File 22 |
+| "Can I just run this fix against production?" | A release job attempted from the author loop. Route it through the hotfix path | Files 11 and 14 |
+| "Production doesn't match what we deployed" | Release (drift) | File 14 |
+| "Two teams used the same version number" | Author, caught in the pull request | File 09 |
+
+The workflow keeps the same shape across every environment and every pipeline stage. What varies is which commands you run and which settings you supply for a given environment. For a team with several development teams, an in-house runner and on-premises and Azure databases, that means one process, not one per database or per team.
+
+## 2. How a change moves: a script package versus Flyway
+
+The left column is the typical script-package flow (the assistant learns how yours works from your repository, or asks; file 01). The right column is the same journey with Flyway.
+
+| Stage | Script package and an in-house runner | With Flyway |
+| --- | --- | --- |
+| Requirement | Defined in a ticket | Same. The ticket key travels with the change (files 17 and 30) |
+| Change | Developers change the application and the database, often a shared development database | Each author changes their own development database, or a shared one by agreement (file 08) |
+| The script | Prepared by hand | Generated from the diff as a versioned migration, then reviewed |
+| Review | Manual, often by one DBA | A pull request: schema model diff, migration, code review and change reports |
+| Source control | The database itself, or loose scripts | The schema model and migrations in Git, one project per database |
+| Non-production | The package runs through the runner | The pipeline applies pending migrations, the same build each time |
+| Validation | After each run, by a person | Post-deployment checks (`info`, `validate`, a drift check) plus the people you name |
+| Production | The same package, after non-production | The same migrations, on demand, behind a required approval |
+| Record of what ran | Limited, per tool | A schema history table in every database, plus pipeline run history and check reports |
+
+Two differences matter most. The unit of change is a numbered migration in Git rather than a package, so "what is deployed where" is a query (`flyway info`), not a search. And the pipeline repeats the same steps in every environment, so production is not the first time the process runs.
+
+## 3. Vocabulary
+
+| Term | Meaning | Detail |
+| --- | --- | --- |
+| Project | A folder with `flyway.toml`, the schema model, migrations and callbacks. One project per database | File 10 |
+| Environment | A named connection (`development`, `shadow`, `build`, `test`, `uat`, `production`) defined in `flyway.toml` or a per-environment config | File 10 |
+| Target | Two meanings. The target environment or database a command runs against; and the `target` setting, the version up to which migrations are considered | File 10 |
+| Migration | A SQL script Flyway applies once, in version order | Section 4 |
+| Versioned, undo, repeatable | `V` runs once in order; `U` reverses a `V`; `R` re-runs when its content changes | Section 4 |
+| Schema history table | The per-database table recording every migration applied, with checksum, who and when. Default name `flyway_schema_history`; the `table` and `defaultSchema` settings change where it lives | Section 5 |
+| Baseline | Marking an existing database as starting at a version (`baselineVersion`), so Flyway applies only later migrations | File 07 |
+| Schema model | A folder of per-object files that mirrors your development database. Generated and committed; changed by capture, not by hand (file 08 has a guarded schema-model-first option). Its location is the `schemaModelLocation` setting | Section 5 |
+| Shadow database | A throwaway database Flyway builds your existing migrations into, so it can work out what the next migration must contain | File 10 |
+| Build database | The pipeline's throwaway database. Proves the migrations run, and is the base for change reports | File 13 |
+| Shadow versus build | Both are throwaway databases Flyway may clean or rebuild, but they do different jobs. The shadow belongs to one developer's author loop (generating and test-migrating); the build belongs to the pipeline (`check` and the pull request build). Don't point `check` at a shadow or reuse one database for both | File 16 |
+| Development database | The database an author changes. Dedicated to one author, or shared | File 08 |
+| Drift | A difference between a database and what Flyway expects it to be, usually from a change made outside the pipeline | File 14 |
+| Snapshot | A point-in-time capture of a database's schema (not its data), used for drift checks and change reports | File 14 |
+| Dry run | The SQL a deployment would run, produced without running it (`flyway check -dryrun`) | File 13 |
+| Check report | The output of `flyway check` with `-code`, `-changes`, `-drift` or `-dryrun` | File 13 |
+| Callback | A script hooked to a Flyway lifecycle event. It runs with the deploying account's rights, so review it like a migration | File 10 |
+| Placeholder | A `${name}` value substituted in versioned and repeatable migrations and SQL callbacks. It isn't substituted in state-based deployment scripts | File 10 |
+| Static data | Reference-table rows tracked by Flyway and deployed with migrations | File 16 |
+| `outOfOrder` | Setting that lets Flyway apply a migration older than the latest applied one. The engine default is false; projects created by `flyway init` or Desktop write `outOfOrder = true`, so read your own `flyway.toml` | File 09 |
+| `cherryPick` | A setting, not a command: `flyway migrate -cherryPick=<version>` applies only the listed migrations, in the order given. Migrations it skips show as Ignored in `info` | File 09 |
+| `validate` | Checks applied migrations against the files in the project, by checksum | File 22 |
+| `repair` | Rewrites the schema history table: removes failed entries, realigns checksums, descriptions and types with the files, and marks missing migrations as deleted. Objects a failed migration left behind stay; clean them up by hand. A person runs it, never automation | File 14 |
+| `clean` | Drops everything in the configured schemas. `cleanDisabled` defaults to true. Only for build, shadow and scratch databases | File 10 |
+
+## 4. Migration types and naming
+
+| Prefix | Type | Use for |
+| --- | --- | --- |
+| `V` | Versioned | Table, column, key, index and constraint changes, plus reference data. Runs once per database, in version order |
+| `U` | Undo | Reverses the `V` script with the same version. Optional; Flyway Enterprise can generate it (file 14). Not for repeatable or baseline migrations |
+| `R` | Repeatable | Views, functions and procedures written to be re-runnable. Re-runs after versioned migrations whenever its checksum changes. Never for table changes |
+| `B` | Baseline | The whole schema at a version, used only to build a new, empty database (file 07) |
+
+The filename is prefix, version, two underscores, then a description. The `validateMigrationNaming` setting makes Flyway error on files whose names don't match the conventions.
+
+> Not from Redgate docs — starting point, validate in your environment.
+```text
+V20261015093015__add_customer_status.sql
+U20261015093015__add_customer_status.sql
+R__customer_summary_view.sql
+```
+
+Flyway Desktop puts a timestamp in generated versions by default, which reduces collisions between branches; from engine 13.7.0 that timestamp is UTC. Versions sort numerically. What happens when two branches add migrations at the same time is file 09.
+
+## 5. The schema model and the history table
+
+The schema model is version control for your development database, object by object. Saving to it deploys nothing. A change becomes deployable when a versioned migration is generated and merged, and it reaches an environment only when the pipeline runs `migrate` there. A database pull request carries two things: the schema model diff (easiest to review) and the migration (the SQL that runs). If they disagree, the migration is what runs, so fix it before merging.
+
+The schema history table is a ledger for one database. Every environment has its own. Comparing environments is the job of `info` per environment, `diff` and drift checks, not of reading one history table. Its checksums are how Flyway notices an applied script was edited.
+
+Two rules never bend, and one default to keep:
+
+- An applied migration is immutable. Once it has run on any shared environment, don't edit, rename or delete it. Fix forward with a new migration.
+- Never hand-edit the history table. `repair` is a decision a person makes after reading file 22.
+
+Schema model files are generated object scripts. The documented route is to change your development database and capture the change. Editing the model files first and applying them to your development database is an option with guardrails, not the default (file 08).
+
+## 6. What a project looks like on disk
+
+One database, one project. Where the project lives (a database repository, or beside application code) is something the assistant reads from your repository (file 01).
+
+> Not from Redgate docs — starting point, validate in your environment.
+```text
+<repo>/
+  flyway.toml             shared settings and every environment, committed
+  flyway.user.toml        personal connections, git-ignored
+  migrations/             V, U and R scripts. Immutable once applied anywhere shared
+  schema-model/           generated from development; change it by capture
+  ci/                     optional: small <environment>.toml files, only if you prefer them
+    test.toml
+    uat.toml
+    production.toml
+  .github/
+    workflows/            the database pipeline (file 12)
+  docs/
+    flyway-library/       this library, committed (file 00)
+  .gitignore              includes *.user.toml
+```
+
+One shared `flyway.toml` can hold every environment, each with its own `${env.X}` references. Flyway resolves only the environment a command selects with `-environment`: tested on engine 13.x, a step for `test` ran with production's variables unset, and selecting an environment whose variable was unset failed with "Unable to resolve environment variable" (file 10). So per-environment `ci/<environment>.toml` files are optional, a matter of taste, not a requirement. If you use them, `-configFiles` loads them in addition to the auto-discovered `flyway.toml`, not instead of it, so the shared settings still apply. `${env.X}` resolves inside those files too. Not yet tested: placeholders and `[flyway]`-level settings that reference an unset variable, so keep those out of the shared file or set the variable in every step.
+
+## 7. Which tool when
+
+| Tool | Use it to | Don't use it to |
+| --- | --- | --- |
+| Flyway Desktop | Capture development changes into the schema model, generate migrations and undo scripts, run checks, review a comparison | Deploy to shared environments. That's the pipeline |
+| Flyway CLI | The same commands in scripts and pipelines: `info`, `validate`, `migrate`, `undo`, `check`, `snapshot`, `diff`, `generate`, `baseline` | Run `clean` or `repair` on shared databases |
+| GitHub Actions | Run the release loop: pull request checks, build once, dry-run preview, approved deployment. Redgate publishes `red-gate/setup-flyway` and `red-gate/flyway-actions` (`migrations/checks`, `migrations/deploy`, `migrations/generate`, `migrations/undo`, `state/prepare`, `state/deploy`) | Author changes, or deploy without an approval on production |
+| SQL Compare | Investigate a difference between two SQL Server databases or scripts, and script it for review | Push changes into a database Flyway manages |
+| SQL Data Compare | Compare and script reference data; investigate row differences on tables you've cleared | Compare production or customer data into reports or prompts |
+| SQL Prompt | Format and write T-SQL in SSMS and Visual Studio; share team styles and snippets for migrations | Replace code review in the pull request |
+| Redgate Monitor | Watch performance and alerts across instances; see what changed around a deployment (file 19) | Deploy or version schema |
+| SQL projects (DACPAC) with SqlPackage, if you keep them during evaluation | Compare the approach in the proof of concept: SqlPackage Publish updates a target to match a `.dacpac`; the Script and DeployReport actions show the plan before it runs | Run alongside Flyway as a second deployer to the same database. Pick one deployer per database (file 06) |
+
+File 19 covers each Redgate tool in depth. File 06 compares the approaches and stays neutral.
+
+## 8. How several teams map onto this
+
+Several teams changing one shared database is the case this process is designed around. Each author works on a branch with their own development database. Version numbers come from timestamps by default, the pull request carries a collision check, and ownership rules say who may change which schema. The pipeline then applies the merged migrations in one order to every environment. File 09 has the branching model, the `outOfOrder` trade-off, schema ownership and filters, and how to fix a schema model merge conflict. Not every estate is one shared database: file 29 covers several databases with cross-database references, database-per-service and blends, and file 28 helps each team choose its workflow while the key areas stay standard.
+
+Contractors, partner developers and teams from an acquired business fit the same way: they author on branches and open pull requests, and only the pipeline deploys. Access to production credentials stays with the pipeline, not with any author.
+
+## 9. In daily use
+
+- Developers: capture, generate, check, pull request. Desktop for most of it; the CLI when scripting.
+- Reviewers: read the schema model diff, then the migration, then the code review and change reports from the pull request check.
+- Release approvers: read the dry-run preview and approve the pipeline run, rather than running scripts by hand.
+- DBAs: use SQL Compare for investigation ("what changed?", "is test the same as production?"), with anything that must change production going back through the author loop (file 15).
+
+## 10. Limits
+
+- Flyway has no built-in "deploy to many databases" command. Each target is one invocation, driven by your pipeline.
+- The schema history table is per database. There is no built-in estate-wide view; collect `flyway info` per target.
+- Snapshots capture schema, not data. Backups and restore own data recovery.
+- A green build proves the scripts run. It doesn't prove a change is safe at production data volume, and it doesn't prove production matches the repository: that's the drift check.
+- Flyway applies migrations; it doesn't anonymize data. Anonymized copies come from your existing process (file 16).
+- A `.dacpac` extracted from a Flyway-managed database includes the schema history table. Anything that publishes it elsewhere must exclude that table (file 06).
+- Cherry-picking and out-of-order deployment each cost you the guarantee that every database ran the same scripts in the same order (file 09).
+
+## 11. Instructions for the AI assistant using this file
+
+- Place every question on a loop first (section 1). If a release-loop job is being done from a workstation, say so and point to the pipeline route.
+- When asked "which tool?", answer from section 7, name the interface and the file that covers it, and stay neutral about SQL projects: describe mechanics, not a verdict.
+- Use the vocabulary in section 3. If the human uses another term (for example "the versions table"), map it once and carry on.
+- Never suggest editing an applied migration or the history table. Offer the forward fix. For schema model files, offer the capture route first; schema-model-first editing only with file 08's guardrails.
+- Never present `cherryPick` as a command; it's a setting. Never say `outOfOrder` is on by default in the engine; tell the person to read their `flyway.toml`.
+- Never recommend a comparison tool deployment into a Flyway-managed database, or a data comparison that would put production data into a script, report or prompt.
+- Read the repository first (file 01) for the environment names and what is in scope before writing configuration or SQL.
+- Keep every environment in the shared `flyway.toml` unless the team already uses per-environment files. Don't say per-environment files are required, and don't say `-configFiles` replaces the auto-loaded `flyway.toml`; it adds to it.
+- Keep shadow and build as separate databases. Never suggest running `check` against the shadow.

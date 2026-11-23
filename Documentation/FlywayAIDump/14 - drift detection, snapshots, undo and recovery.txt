@@ -1,0 +1,297 @@
+Flyway Enterprise AI library - file 14 of 32
+Drift detection, snapshots, undo and recovery
+Flyway reference library, October 2026. Generic guidance written for your AI assistant. It contains no data from your environment, and you shouldn't add any to these files.
+
+What this covers: How to know whether a database still looks the way Flyway left it, and how to recover when a release goes wrong: drift from hotfixes made through an old script runner or SSMS, snapshots, `check -drift` before a release and on a schedule, resolving drift, undo scripts, roll-forward, failed migrations on SQL Server, `repair`, restore from backup, and a decision tree.
+
+Not in this file: code review and tests (file 13), incident scenario cards (file 22), the DBA emergency-change routine (file 15), re-baselining (file 07), pipeline placement (files 11, 12), audit use of drift reports (file 17).
+
+Contents:
+1. What drift is for your team
+2. Snapshots and where they live
+3. Saving a snapshot on every deploy
+4. check -drift before a release and on a schedule
+5. Reading a drift report
+6. Three ways to resolve drift
+7. Undo migrations
+8. Roll forward in production
+9. When a migration fails on SQL Server
+10. Repair is a person's decision
+11. Restore from backup, the last resort
+12. Recovery decision tree
+13. In daily use
+14. Limits
+15. Instructions for the AI assistant using this file
+
+## 1. What drift is for your team
+
+Drift is any difference between a database and the state Flyway expects. For a team leaving a script runner, the usual cause is a hotfix applied to production through the old runner or in SSMS during an incident, never recorded in source control. The next release then fails on a clash or carries on with an environment no one can rebuild from source.
+
+Drift detection doesn't stop the hotfix. It makes it visible before the next release and forces one decision per object. Cheapest first: prevent (file 13), detect early, undo in a lower environment, roll forward in production, restore last.
+
+## 2. Snapshots and where they live
+
+A snapshot captures a database's schema, not its data, so Flyway can compare against it later. `flyway snapshot` is a Flyway Enterprise command.
+
+| Fact | Detail |
+|---|---|
+| Command | `flyway snapshot`; `snapshot.filename` is required |
+| Where it goes | A file, or the snapshot history table in the target database. A name starting `snapshotHistory:` addresses a table entry; `current` and `previous` are keywords for the newest and the one before. For a file, missing parent directories are created. From engine 11.17.1 snapshot files can also be written to and read from an S3 bucket in drift checks |
+| Naming | Rows saved automatically after a deploy get non-unique names such as "Snapshot following deployment". Name a snapshot you'll want to find again, such as a release, explicitly: `"-snapshot.filename=snapshotHistory:1.0.0_release"` |
+| Table | `flyway_snapshot_history` by default, created automatically. Its schema is `defaultSchema` if set, else the first entry in `schemas`, else the connection's default. `snapshot.historyTable` renames it |
+| Dry runs | No snapshot is saved during a dry run of `migrate`, `undo` or `deploy` |
+| Retention | `snapshot.historyLimit`: 5 by default per the setting page and the engine release note that raised it; the older Snapshots concept page still says 1. Set it explicitly under `[flyway.snapshot]` (at least 2 if you use `previous`); Desktop can't write it to the config file. Older entries roll off |
+| Size cap, compressed | SQL Server `VARBINARY(MAX)`, 2 GB. Beyond that, store snapshots as files |
+| From migrations | `-snapshot.source=migrations` with `-snapshot.buildEnvironment=build` and `-snapshot.buildVersion=<version>` captures what the migrations produce at a version. `buildCherryPick` (default `[]`) sits beside `buildEnvironment` and `buildVersion` in the `snapshot` and `diff` settings and applies, like them, when the source is `migrations` |
+
+Storing snapshots in the target is what drift checks expect by default (`check.deployedSnapshot` defaults to `snapshotHistory:current`): less to set up, and a check works at any time. The deploy account needs rights to create and write the table, as for `flyway_schema_history`.
+
+Documentation: https://documentation.red-gate.com/flyway/flyway-concepts/snapshots
+
+## 3. Saving a snapshot on every deploy
+
+| Setting or tool | Default | Notes |
+|---|---|---|
+| `migrate.saveSnapshot` | `false` | Saves a snapshot to the history table when `migrate` succeeds |
+| `deploy.saveSnapshot` | `false` | The same for `deploy` (state-based scripts) |
+| `undo.saveSnapshot` | `false` | Keeps drift checks aligned after an undo |
+| Flyway Desktop deploys | Save by default from Desktop 9.10.0 | Desktop only |
+| `migrations/deploy` GitHub action | Drift check before and snapshot after, unless `skip-drift-check` or `skip-snapshot` is `true` | File 12 |
+
+A hand-written CLI pipeline gets no snapshots unless it asks. Put `-migrate.saveSnapshot=true` (or `-deploy.saveSnapshot=true`, `-undo.saveSnapshot=true`) on the command, where a reviewer sees it, not in TOML, where it applies to every environment. Snapshot right after baselining an environment (file 07); with none, the first drift check succeeds with a warning.
+
+## 4. check -drift before a release and on a schedule
+
+`check -drift` (Flyway Enterprise) compares the live target with an expected state from one of three places:
+
+| Expected state from | Command shape | What it finds |
+|---|---|---|
+| The snapshot in the target (default) | `flyway check -drift -environment=production` | Changes since the last snapshot. `check.deployedSnapshot` defaults to `snapshotHistory:current` |
+| A snapshot file | `-check.deployedSnapshot=<file>` | Changes against a snapshot kept as an artifact. A value with no prefix is read as a file path; the `filesystem:` prefix is optional |
+| A build environment | `-check.buildEnvironment=build` | All drift from what the migrations produce, including drift older than the last deploy |
+
+`check.failOnDrift` makes drift fail with `CHECK_DRIFT_DETECTED`, separate from set-up errors such as `CHECK_BUILD_NO_PROVISIONER`, so drift can go to an approver and set-up errors to the platform team. Chained verbs keep running even when `failOnDrift` trips, so run it as its own step. If one run has both `-drift` and `-changes`, drift always runs first.
+
+| Job | When | On drift |
+|---|---|---|
+| Pre-release gate | Before each deploy to `test`, `uat` and `production` | The deploy step doesn't run; a person resolves (section 6) |
+| Scheduled drift job | A GitHub Actions `schedule` trigger against `uat` and `production` | The job goes red and links the report; nothing changes |
+
+> Not from Redgate docs — starting point, validate in your environment.
+
+```bash
+# One step, one environment, read-only check account. The ci/<env>.toml file is optional:
+# with every environment in the shared flyway.toml, drop -configFiles (file 10).
+set -euo pipefail
+ENV_NAME="production"
+flyway check -drift -configFiles="ci/${ENV_NAME}.toml" -environment="${ENV_NAME}" \
+  "-check.failOnDrift=true" \
+  "-check.driftResolutionFolder=drift-resolution/${ENV_NAME}" \
+  -reportFilename="reports/${ENV_NAME}-drift"
+# The deploy is a separate step that runs only if this one succeeded:
+# flyway migrate -configFiles="ci/${ENV_NAME}.toml" -environment="${ENV_NAME}" -migrate.saveSnapshot=true
+```
+
+Publish the report and resolution folder as artifacts, pass or fail, and keep the previous run's report. Turn `failOnDrift` on for production only after existing drift is resolved; otherwise every release fails for reasons nobody caused and the gate gets ignored. Documentation: https://documentation.red-gate.com/flyway/reference/commands/check/check-drift
+
+## 5. Reading a drift report
+
+Each run writes an HTML report and a JSON file beside it. The JSON has `onlyInSource`, `onlyInTarget` and `differences`; each difference has `name`, `schema`, `objectType`, `definitionBefore` and `definitionAfter`. From engine 13.0 the drift and changes JSON also gives each difference an `id`. When `failOnDrift` fails the step, the JSON output names the report and the resolution folder (from engine 12.0.3), and the folder is written as an absolute path (from engine 12.1), so a pipeline can find both without guessing.
+
+1. `onlyInTarget` lists objects someone created; `onlyInSource` objects expected but missing; `differences` objects on both sides that differ, with both definitions.
+2. Compare with the previous run. Only new items need triage. If many differences appear at once with no hotfix behind them, check whether the snapshot was taken with different filters or comparison options from today's check; that produces drift nobody made.
+3. Find who changed each item and why: the old runner's log, SSMS history, the incident ticket.
+4. Make the section 6 decision and record it in your decision log (file 01).
+
+`check -drift` also writes resolution scripts by default (`check.generateDriftResolutionScripts` is `true`) into `drift-resolution` under the working directory: revert and incorporate scripts and, for SQL Server, a filter file. The folder is emptied on every run, so point `driftResolutionFolder` at a dedicated folder and publish it straight after the step. In Flyway Desktop, `check.driftResolutionFolder` can be set as an advanced parameter on the Migrations page (from Desktop 9.5.8). From engine 12.10.0 a failure to generate the scripts no longer fails `check -drift`, so a passing step doesn't prove the scripts exist; check the folder. Reports hold object definitions, not rows.
+
+## 6. Three ways to resolve drift
+
+Each drifted object gets one decision from a person. Never auto-apply a resolution script.
+
+| Decision | When it fits | The caution |
+|---|---|---|
+| 1. Bring it into source control | The hotfix is real and should stay | Steps below. Until the change is recorded as applied in production, the check keeps flagging it |
+| 2. Revert it | A mistake, or a workaround that has served its purpose | Reverting can bring the incident back, and a revert that drops a column drops its data. Get the business owner's agreement |
+| 3. Accept and re-snapshot | The team accepts today's state on that target for now | The lighter, documented step: take a new snapshot of the target (`flyway snapshot -snapshot.source=<env> -snapshot.filename="snapshotHistory:<name>"`) so later checks compare against it. It hides the difference without putting the change in source control, so a database rebuilt from the migrations lacks it. Not recommended for production. In a state-based project it doesn't help: the next deploy reverts the object unless it's filtered |
+
+Re-baselining is a separate, heavier step, not a way to accept drift. It replaces the schema history, is a manual procedure run by a person, and is covered in file 07.
+
+Option 1, following Redgate's tutorial. Start from the generated incorporate script in `drift-resolution`; on SQL Server it carries object existence checks, so it is safe to run everywhere.
+
+> Not from Redgate docs — starting point, validate in your environment.
+
+```bash
+# 1. development matches the schema model (no differences expected)
+flyway diff -diff.source=development -diff.target=schemaModel
+# 2. copy the incorporate migration into migrations/, fix its version if needed, run it on development
+flyway migrate -environment=development
+# 3. capture it into the schema model, then commit and open a pull request
+flyway diff -diff.source=development -diff.target=schemaModel
+flyway model
+# 4. a person, after `flyway info -environment=production` shows this is the only pending migration:
+#    record it on production without re-running the SQL
+flyway migrate -environment=production -cherryPick=<incorporate-version> -skipExecutingMigrations=true
+```
+
+`skipExecutingMigrations` records every migration the run would apply without executing it, so without `cherryPick` it marks all pending migrations (up to `target`, if set) as applied. Never use it without that `info` check. The tutorial also refreshes the target's snapshot when you check against stored snapshots: `flyway snapshot -snapshot.source=production -snapshot.filename="snapshotHistory:drift_correction"`. If the incorporate script is idempotent, skip step 4 and let a normal deploy run it.
+
+Option 2, revert. The generated `revertDrift.sql` removes the drift from the target the check ran against. A person reads it, gets the business owner's agreement, and runs it from the command line as its own step (Flyway Desktop can't run it):
+
+> Not from Redgate docs — starting point, validate in your environment.
+
+```bash
+# A person runs this once, after reading the script. Adjust the path if driftResolutionFolder is set.
+flyway deploy "-deploy.scriptFilename=drift-resolution/revertDrift.sql" "-environment=production"
+```
+
+In a migrations-based project, run `revertDrift.sql`, then deploy as usual. In a state-based project the next deploy reverts unfiltered drift anyway, so running `revertDrift.sql` first is optional. The resolution folder is emptied on every check run, so use the script from the run whose report you reviewed.
+
+Two more outcomes. Filter: an intended per-environment difference goes in the filter file (file 10). Leave it, on purpose: migrations-based projects only, when the next release doesn't touch or depend on the object; record it. State-based deployments can't leave drift alone, because the next deploy reverts any unfiltered drifted object (file 06). For old-runner hotfixes, bring the change into source control first, then retire the habit (file 15).
+
+## 7. Undo migrations
+
+An undo script is `U<version>__<description>.sql`, paired with the versioned migration of the same version. Undo generation is off by default (`generate.types` defaults to `versioned`). Turn it on in Flyway Desktop's project settings (confirm the wording in your version), per run with `flyway generate -types=versioned,undo -version=<version> -description=<description>`, or in TOML:
+
+> Not from Redgate docs — starting point, validate in your environment.
+
+```toml
+[flyway.generate]
+types = ["versioned", "undo"]
+```
+
+Review each generated undo next to its migration. The command warns about data loss, such as a dropped column. The usual edit is changing a `DROP` to a rename and dropping later in a deliberate migration. Editing a migration doesn't update its undo.
+
+| Command | What it does |
+|---|---|
+| `flyway info` | Shows what a bare `undo` will reverse. Run it first |
+| `flyway undo` | Undoes the most recently applied versioned migration |
+| `flyway undo -target=<version>` | Undoes in reverse applied order until it reaches a version below the target (so the target itself is undone) or one with no undo script |
+
+When undo can't help: it never reverses repeatable migrations; it brings back no rows (an undo that drops a column discards its data); it assumes the migration fully succeeded, so it can't clean up a failed or partly applied one; and a cherry-picked undo is safe only if nothing later depends on that migration. A failed migration needs section 9.
+
+Guard it: a `beforeUndo` callback can raise an error when the database looks like production, an `afterUndo` callback can record who ran it, and `production` stays out of the undo pipeline's environments. Test every undo in the pull request build (file 13, section 11).
+
+## 8. Roll forward in production
+
+In production the default is a new versioned migration that fixes the problem, through the usual pull request, checks, approval and deploy. Undo and `clean` suit `build`, `development` and `test`; `uat` takes an undo only when rehearsed. To write the corrective migration from stored state, diff the pre-release snapshot against production, generate, review and ship the result as a migration:
+
+> Not from Redgate docs — starting point, validate in your environment.
+
+```bash
+# Rehearse on a lower environment first. Review the generated script before it goes anywhere.
+flyway diff -diff.source=snapshotHistory:previous -diff.target=production
+flyway generate -generate.types=versioned -generate.target=production -generate.description=<ticket-key>-revert
+```
+
+`generate.target` sets the direction: it names the side of the diff the script changes and must match `diff.source` or `diff.target` (it defaults to `diff.target`). Here the script changes `production` to match the previous snapshot. Rehearse on `build` before a real incident. The quickest first move is often switching the application feature flag off, which needs no database change.
+
+State-based projects have no migration to roll forward with. Redgate's snapshot history tutorial prepares a rollback script from the previous snapshot instead, and a person reviews and deploys it behind the same approval:
+
+> Not from Redgate docs — starting point, validate in your environment.
+
+```bash
+# Rehearse on a lower environment first. A person reads D__rollback.sql before the deploy step.
+flyway diff "-diff.source=snapshotHistory:previous" "-diff.target=production"
+flyway prepare "-prepare.scriptFilename=D__rollback.sql"
+flyway deploy "-deploy.scriptFilename=D__rollback.sql" "-environment=production"
+```
+
+Snapshots hold schema only, so review the generated script for its effect on static and transactional data before anyone approves it. The script approved is the script deployed (file 11, section 6).
+
+## 9. When a migration fails on SQL Server
+
+Flyway runs each migration in its own transaction. Redgate's transaction handling page says that if Flyway detects a statement that can't run in a transaction, it runs that migration outside one and marks it non-transactional. When the migration is transactional, a failure rolls back cleanly and earlier migrations from the run stay applied. That is the usual case on SQL Server and Azure SQL.
+
+What doesn't roll back:
+
+- Statements that can't run in a transaction. Microsoft documents that `CREATE DATABASE` and `ALTER DATABASE` must run in auto-commit mode, not in an explicit or implicit transaction. Check a statement's own page on learn.microsoft.com before assuming; full-text and other features have their own rules.
+- Memory-optimized table DDL. Redgate's SQL Server page says automatic detection doesn't cover it, so set `executeInTransaction=false` for the script.
+- Any migration you configured as non-transactional.
+
+The settings:
+
+- `executeInTransaction=false` in a script configuration file named like the migration plus `.conf` (`V12__x.sql.conf`) runs that one migration without a transaction.
+- `mixed` (default `false`) decides what happens when one migration holds both kinds of statement. Left `false`, Flyway refuses the migration with an error saying it detected both transactional and non-transactional statements, before running any of it. Set to `true`, Flyway runs the whole migration without a transaction, so a failure part-way leaves the earlier statements applied. Read your own `flyway.toml` to see which you have.
+- `group` (default `false`) runs all pending migrations in one transaction; it has no effect on a migration that runs without one.
+
+Keep each statement that can't run in a transaction in a migration of its own, so a failure leaves at most that statement's partial effect. `ALTER DATABASE` also ignores `SET LOCK_TIMEOUT`.
+
+If a non-transactional migration fails part-way, `flyway info` shows Failed, the next `migrate` stops with "contains a failed migration to version ...", and `validate` reports `FAILED_VERSIONED_MIGRATION`. Redgate's fix: remove the incomplete changes, then run `repair`. Inspect what ran, clean up by hand or fix forward, then a person runs `repair`, then `migrate`.
+
+## 10. Repair is a person's decision
+
+`flyway repair` changes only the schema history table. Per the docs it removes failed migrations (objects they left behind still need manual clean-up), realigns checksums, descriptions and types with the available files, and marks missing migrations as deleted, so it needs the same `locations` as `migrate`.
+
+Right: after cleaning up a failed partial migration, or after a proven cosmetic edit to an applied migration. Wrong: to make a checksum error disappear without knowing why the file changed, because repair then hides that edit from later validation. If a changed migration reached production, run a drift check first.
+
+The trap: after `repair` clears a failed row, a bare `undo` reverses the last good migration, the one before the failure. Never run `undo` straight after such a repair.
+
+Never put `repair` in a pipeline, retry loop or start-up path. A person runs it against one named environment with a recorded reason.
+
+## 11. Restore from backup, the last resort
+
+Snapshots and undo restore structure, never rows. A restore is a decision for a named person, never a pipeline step.
+
+- On-premises SQL Server: the restore tooling and backup policy your DBA team runs. Confirm a backup before a risky release.
+- Azure SQL Database: Microsoft documents point-in-time restore as creating a new database on the same server. You can't overwrite an existing database, and restore runs from the portal, Azure CLI, PowerShell or REST, not T-SQL. To swap the copy in, rename the databases. Azure SQL Managed Instance has its own page.
+
+A restore loses every change after the restore point. The restored database carries its own `flyway_schema_history` and snapshot history as of that moment, so run `flyway info` first; the next `migrate` reapplies what is pending. A new database means new connection details (file 10). Rehearse a restore in a non-production environment. Documentation: https://learn.microsoft.com/en-us/azure/azure-sql/database/recovery-using-backups
+
+## 12. Recovery decision tree
+
+> Not from Redgate docs — starting point, validate in your environment.
+
+```text
+Something is wrong after a release or a failed run.
+|
++-- Is production affected right now?
+|     yes -> stop the line (no re-runs); consider the feature flag; name one owner (file 22)
+|
++-- Did Flyway report an error?
+|     yes -> run `flyway info` on that environment
+|          +-- a migration shows Failed
+|          |     -> section 9: inspect, clean up, person runs repair, then migrate
+|          +-- nothing applied (validate or connection error)
+|                -> file 22 scenario card; fix the cause; no state change
+|     no  -> the release succeeded but is wrong:
+|          build / development / test -> undo after `info`, or clean and rebuild
+|          uat                        -> undo only if rehearsed, else roll forward
+|          production                 -> roll forward with a new migration (section 8)
+|
++-- Were rows lost or damaged, or is the state unknown?
+|     yes -> restore from backup (section 11); a named owner decides
+|
++-- Was the change made outside the pipeline?
+      yes -> drift: section 6 (incorporate, revert, or accept and re-snapshot)
+```
+
+## 13. In daily use
+
+For the on-call DBA or release owner, each morning and before each release:
+
+1. Open the scheduled drift job. Green means no drift; red means drift or an error.
+2. Open the HTML report for each red environment and compare with the last run.
+3. For each new difference, find who and why, then record the section 6 decision in your decision log (file 01).
+4. Hand the resolution script to a pull request.
+5. Before a release, confirm the gate was green and the last deploy saved a snapshot.
+
+Common questions: "can we undo it?" (sections 7, 8), "someone changed production" (section 6), "the deploy half-failed" (section 9, file 22).
+
+## 14. Limits
+
+- Snapshots and drift checks cover schema, not data, one target at a time.
+- Undo covers versioned migrations only, restores no data, and can't clean up a failed migration.
+- `repair` edits history only; it never cleans up objects.
+- A filter hides drift from the check. Filter by pattern, never by habit.
+- Flyway takes no backup before it migrates (file 15).
+
+## 15. Instructions for the AI assistant using this file
+
+- For "how do we roll back production?", lead with section 8: roll forward, with undo kept for lower environments and restore for data loss.
+- Never suggest `repair`, `undo`, `skipExecutingMigrations`, a resolution script or a restore against production without a person's explicit decision. Run `flyway info` first, and a drift check where relevant.
+- Never chain `check -drift` with `migrate`. Never put `repair` in a pipeline.
+- Keep "accept and re-snapshot" (a new snapshot, lighter) apart from "re-baseline" (replaces history, manual, file 07). Never offer a re-baseline as the way to accept drift.
+- For snapshots in a CLI pipeline, say the defaults are `false`; use `-migrate.saveSnapshot=true` (or the `deploy.` or `undo.` form) on the command.
+- Ask which environment and error first. If a failure is live, move to file 22.
+- Answer in the person's language. Keep commands, keys and error text in English.

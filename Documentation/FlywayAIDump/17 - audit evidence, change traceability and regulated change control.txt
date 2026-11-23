@@ -1,0 +1,226 @@
+Flyway Enterprise AI library - file 17 of 32
+Audit evidence, change traceability and regulated change control
+Flyway reference library, October 2026. Generic guidance written for your AI assistant. It contains no data from your environment, and you shouldn't add any to these files.
+
+What this covers: How to answer an auditor's questions about database change with evidence your pipeline already produces: who changed what, when, why, who approved it, what exactly ran, and whether production is what you think it is. It covers the evidence Flyway and GitHub produce, what the ticket key proves, separating duties, retention, a per-release evidence pack, a generic mapping to ICT change-management control objectives, and keeping regulated data out of reports and prompts.
+
+Not in this file: building the pipeline (files 11 and 12), drift and snapshot mechanics (file 14), code review rules (file 13), the DBA runbooks (file 15), Flyway Insights (file 18), the three deployment approaches (file 06, section 2), and linking work items and change requests in Jira, ServiceNow, Azure Boards or GitHub Issues, including the ticket-key pull request check and gating production on an approved change (`30 - ticketing and change requests - Jira, ServiceNow, Azure Boards and GitHub Issues.txt`).
+
+Contents:
+1. The six questions auditors ask
+2. The evidence for each question
+3. What each artifact proves, and what it doesn't
+4. The ticket key, end to end
+5. Segregation of duties
+6. Retention
+7. The per-release evidence pack
+8. Mapping to ICT change-management control objectives
+9. Keeping regulated data out of reports and prompts
+10. In daily use
+11. Limits
+12. Instructions for the AI assistant using this file
+
+## 1. The six questions auditors ask
+
+For: the release owner, the lead DBA and whoever meets the auditor.
+
+Internal and external audits of a production database change tend to ask:
+
+1. Who changed what?
+2. When did it happen?
+3. Why, and under which ticket?
+4. Who approved it, and was that someone other than the author?
+5. What exactly ran?
+6. Is production what you think it is, with nothing changed outside the process?
+
+A Flyway and GitHub pipeline answers all six from artifacts it produces anyway. The work is linking them by ticket key and keeping them long enough.
+
+## 2. The evidence for each question
+
+| Question | Migrations-based release | State-based release (file 06, section 2) |
+|---|---|---|
+| Who changed what | Commit author and diff of the migration, in the pull request | Commit author and diff of the schema model |
+| When | Schema history table (`installed_on`) and `flyway info -outputType=json` (`installedOnUTC`); workflow run time | Workflow run time and the deploy log. No versioned rows in the history table |
+| Why, which ticket | Ticket key in branch, commit, pull request title and migration name (section 4, file 30) | Same, minus the migration name; the key goes in the run summary |
+| Who approved | Pull request approvals, the `production` environment approval record (who, when, comment), and the change request approval if your change process gates releases (file 30, section 9) | Same |
+| What exactly ran | The migration files in the build artifact, the dry-run SQL published before approval, and the history table | The prepared deployment script published with the run, compared with the approved one before deploy |
+| Is production as expected | Pre-deployment drift check, scheduled drift checks, and the snapshot saved after each deploy | Same |
+
+## 3. What each artifact proves, and what it doesn't
+
+| Artifact | Proves | Caveat |
+|---|---|---|
+| Schema history table | Which migrations were applied to that database, when, by which account, with checksum and success | It has no author or ticket column. Anyone with write access can edit it, and `repair` rewrites it. It records nothing done outside Flyway |
+| Migration files in Git | The exact reviewed SQL, with history | Only as strong as branch protection (section 5) |
+| Pull request approvals | A named person other than the author reviewed it | Dismissed or stale approvals matter (section 5) |
+| Environment approval log | Who approved the production job, and when | A GitHub feature. Configure it outside the workflow file |
+| Workflow run log | What the pipeline did, in order | Retained per your settings (section 6) |
+| `migrate -outputType=json` output | What that run executed: `migrationsExecuted`, the `migrations[]` list and the resulting `targetSchemaVersion` (file 12, section 15) | Capture it per run with a run-specific name; it covers only that run |
+| Dry-run report | The SQL the deploy would run (`check -dryrun`). The JSON report carries it in a `sql` field | It's a preview. Compare it with what ran |
+| Check reports | Code review findings, the changes report and drift, by object | The changes report is built from build-environment snapshots, so production drift never appears in it. Run the drift check too |
+| Snapshots and drift reports | Production matched, or didn't match, its last deployed state | Snapshot history keeps a limited number of entries (`historyLimit`, file 14). It's a recovery tool, not an archive |
+
+Present the history table beside the pipeline record and the drift results, never alone.
+
+## 4. The ticket key, end to end
+
+Flyway doesn't connect to your ticket system. The link is a naming habit that every tool preserves, and each tracker's own GitHub integration reads. File 30 has the full convention, the syntax for Jira, ServiceNow, Azure Boards and GitHub Issues, and the pull request check that enforces it. For audit, what matters is what each touchpoint proves:
+
+| Where | Example | What it proves to an auditor |
+|---|---|---|
+| Branch | `feature/<ticket-key>-add-order-status`, `hotfix/<ticket-key>-fix-index` | Every commit traces to the ticket |
+| Commit, first line | `<ticket-key> Add status column to orders` | Git history ties the change to the ticket |
+| Pull request title | `<ticket-key> Add status column to orders` | The review record carries it |
+| Migration name | `V3_20261007093000__<ticket-key>_add_order_status.sql` | The description lands in the history table of every database, so the key is queryable in production itself (file 30, section 2) |
+| Run summary | The list of keys in the release, and `-installedBy` set to the run ID | The approval shows the scope, and the history table points back to the run |
+| Change request | Keys, pull request link, run link, attached check report | The change record and the deployment evidence match (file 30, section 8) |
+| Ticket | A link to the run that deployed it | Closes the loop |
+
+`flyway add -add.description=<ticket-key>_add_order_status -add.timestamp=true` creates a hand-written migration with a `yyyyMMddHHmmss` timestamp in the version. Redgate's `add` page documents `description` and `timestamp`. Generated migrations take the key in `-generate.description` or Desktop's Description field.
+
+Keep descriptions to a ticket key and a short technical phrase. Never put customer, account or other regulated values in a filename, description or commit message.
+
+Enforce it. The ticket-key pull request check in file 30, section 3 fails a pull request whose branch, title or new migration lacks a key. The match is case-sensitive, so `abc-123` fails where `ABC-123` passes. Make it a required status check on main (section 5). The auditor's evidence is the check's run history plus the branch rule that requires it.
+
+## 5. Segregation of duties
+
+Auditors look for different people as author, reviewer and production approver, and for no bypass. Verified against GitHub's documentation:
+
+- GitHub doesn't let a pull request author approve their own pull request ("Pull request authors cannot approve their own pull requests", GitHub's page on approving a pull request with required reviews). That gives you author and reviewer separation for free, but the same page says repository owners and administrators can merge without an approving review. Close that with the next rule.
+- Branch protection or a ruleset on main: require pull requests and approvals, dismiss stale approvals when new commits are pushed, require review from code owners, require status checks (pull request build, ticket-key check), and turn on "Do not allow bypassing the above settings". Without that last one, administrators are exempt.
+- "Require approval of the most recent reviewable push" stops anyone, the author included, from pushing a last change after the reviewer approved.
+- A `CODEOWNERS` file for the migrations folder, `flyway.toml`, `ci/`, callbacks and `.github/workflows/` (file 15, section 2). An approval from any one listed owner satisfies the code-owner rule.
+- The `production` environment, per GitHub's "Deployments and environments" page: required reviewers (up to six users or teams, each with at least read access; one approval lets the job proceed), Prevent self-review (whoever started the deployment can't approve it, even if they are a required reviewer), administrator bypass turned off, deployment limited to selected branches and tags, and production credentials stored as environment secrets, which a job can't read until a required reviewer approves it.
+- Plan check: the same page says that on GitHub Free, Pro and Team plans, required reviewers and the administrator-bypass setting are available only for public repositories. A private or internal repository needs GitHub Enterprise (Cloud or Server) for them. Deployment branch rules and environment secrets do work on Team private repositories, but they don't give you a named approver. Check your plan before you rely on approvals as a control, and record it in your decision log (file 01).
+- Change approval: if releases also need an approved change request (ServiceNow or Jira Service Management), the person who raised or implemented the change doesn't approve it, and a pipeline service account may create or close a change but never approves one (file 30, section 10).
+- Separate database accounts: a read-only check account and a deploy account (file 15, section 8).
+- Flyway has no role-based access feature of its own. Access control is the database permissions each account holds plus the GitHub rules above, so describe it that way to an auditor.
+- Treat callbacks and script migrations as privileged code. Callbacks aren't checksum-validated the way versioned migrations are, and a script callback runs with the deploying account's rights and can read that account's credentials from the environment. Code owners review every change to `callbacks/`, and the deploy account holds only the rights the migrations need.
+- Test it. Try to approve a test pull request as its author, and a test production run as the person who started it. Both should be refused. Keep the evidence.
+- Contractors and teams from other business units use the same path. No direct pushes, no standing production access.
+- Close the manual route to production once the pipeline is trusted, and record the date in your decision log (file 01).
+
+## 6. Retention
+
+Your compliance team sets how long release evidence must be kept. Then check these, all from GitHub's and Redgate's documentation:
+
+- GitHub's "Managing GitHub Actions settings for a repository" page: by default, checks, workflow runs, commit statuses, artifacts and logs are kept for 90 days. From 1 October 2026 the retention setting covers checks, workflow runs and commit statuses as well as artifacts and logs. You can set 1 to 90 days on public repositories and 1 to 400 days on private repositories, organization and enterprise policies can limit it, and a change applies only to new items. Even at the maximum, GitHub isn't a multi-year archive.
+- `actions/upload-artifact` takes `retention-days` per artifact, up to the repository's setting.
+- Redgate's checks and deploy actions upload report artifacts with a default of 7 days. The inputs are `pre-deployment-report-retention-days` (checks), `deployment-report-retention-days` (deploy) and `drift-resolution-scripts-retention-days` (both). Set them explicitly. The deploy action's README says it uploads the deployment report when drift is detected, so don't rely on it as your only record of a clean deploy.
+- Flyway reports keep no history from engine 12.0.0: each run overwrites the report file. Archive every run's HTML and JSON reports with a run-specific name, and don't pass `-check.generateReport=false` in a pipeline whose reports are evidence.
+- The JSON report carries a `schemaVersion` field, and engine 13.9.0 switched to a new report implementation by default. Record the schema version with the archived reports, and re-check any tooling that reads them after an upgrade.
+- Copy the evidence pack to your records system as the last step of every production run. It's your system of record, and GitHub is the working copy.
+- Never rewrite main. Protect release tags with a ruleset.
+- The schema history table and snapshots live in each database. Snapshot history is a recovery tool.
+- Flyway Insights states no retention period (file 18). Don't make it your record.
+- If security operations wants every production change in its SIEM, forward each run's `-outputType=json` output and report JSON with your usual log shipping. From engine 13.2.0 the JSON timestamps carry a UTC offset, so check your parser. Flyway reports the script that failed, not every statement that ran before it, and statement-level execution logging isn't a documented Flyway feature. Where you need that level, use SQL Server's own auditing on the production database.
+- Flyway has no append-only, tamper-evident audit log separate from the schema history table. Your records system, holding the evidence pack, plays that role.
+
+## 7. The per-release evidence pack
+
+Publish this with every production run, passing or failing:
+
+> Not from Redgate docs — starting point, validate in your environment.
+
+```text
+evidence/<release-tag>/
+  README.txt            release tag, commit, run link, ticket keys, approvers
+  01-approvals/         pull request links, review export, environment approval record
+  02-checks/            check -code report, changes report, dry-run SQL, pre-deploy drift result
+  03-deployment/        deploy log, info-before.json, info-after.json
+  04-verification/      post-deploy drift result, snapshot reference, smoke test results
+  05-exceptions/        emergency changes, drift decisions, waivers, or the word none
+```
+
+A step to assemble the parts GitHub holds, run after the deploy job:
+
+> Not from Redgate docs — starting point, validate in your environment.
+
+```yaml
+- name: Build the evidence pack
+  shell: bash
+  env:
+    GH_TOKEN: ${{ github.token }}
+    TAG: ${{ github.ref_name }}
+  run: |
+    d="evidence/$TAG"
+    mkdir -p "$d/01-approvals" "$d/03-deployment"
+    echo "Run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" > "$d/README.txt"
+    gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/approvals" > "$d/01-approvals/environment-approvals.json"
+    gh pr view <pull-request-number> --json title,author,reviews,mergedAt,url > "$d/01-approvals/pull-request.json"
+    last=$(git describe --tags --abbrev=0 --match 'prod-*' HEAD^ 2>/dev/null || git rev-list --max-parents=0 HEAD)
+    git log --format=%s "$last"..HEAD | grep -oE '[A-Z][A-Z0-9]+-[0-9]+' | sort -u | tr '\n' ' ' >> "$d/README.txt"
+- uses: actions/upload-artifact@v7   # pin to a full commit SHA; on GitHub Enterprise Server use the version your server supports (file 12)
+  with:
+    name: evidence-${{ github.ref_name }}
+    path: evidence/
+    retention-days: <days-from-your-policy>
+```
+
+GitHub's REST API has an endpoint that returns a run's review history (`/actions/runs/{run_id}/approvals`), which is the source of the approval record. Add the check and drift reports and the `info` output from earlier steps, then copy the folder to your records system. The `gh pr view` fields assume one pull request per release. Adapt it if a release spans several. The job needs `actions: read` and `pull-requests: read` permissions and a full checkout (`fetch-depth: 0`) for the tag lookup.
+
+## 8. Mapping to ICT change-management control objectives
+
+If your organization is subject to rules such as the EU Digital Operational Resilience Act (DORA), your compliance team decides which controls apply; this table shows the evidence Flyway and GitHub can produce. It makes no legal claim and isn't a compliance mapping.
+
+| Control objective (generic) | Evidence produced | Where it lives |
+|---|---|---|
+| Changes are recorded, tested, approved and traceable | Pull request, migration file, ticket key in names, check reports, approvals | Git and GitHub, evidence pack |
+| The person who approves isn't the person who authored | Review and environment approval records, branch and environment rules | GitHub settings export, approval JSON |
+| What was tested is what is deployed | Same artifact promoted from `uat` to production, dry-run SQL read before approval, history checksums | Workflow runs, dry-run report, history table |
+| Production changes only through the controlled path | Pre-deploy and scheduled drift checks, passing and failing | Pipeline artifacts, snapshot history |
+| Changes are approved through the change process before release | Change request with the check report attached and its approval record, or the GitHub environment approval (file 30, sections 8 and 9) | Change system, GitHub, evidence pack folder 01 |
+| Emergency changes are controlled and reviewed afterward | Emergency or retrospective change record, incident ticket, hotfix pull request or drift report plus reconciling migration (file 15, section 4; file 30, section 11) | Change system, Git, evidence pack folder 05 |
+| Recovery from a failed change is planned and rehearsed | Undo tested on `build`, recorded recovery route, rehearsal results (file 14) | Pipeline artifacts, your decision log (file 01) |
+| Access to production is restricted and reviewed | Account list, environment reviewers, periodic access review | GitHub, your identity system, access review records |
+| Third-party and contractor changes follow the same controls | Same pull request and approval path for every author | GitHub team and branch rules |
+| Change records are retained for the required period | Exported evidence pack | Your records system |
+
+Redgate has published its own mapping of Flyway Enterprise capabilities to articles of the EU regulation: https://www.red-gate.com/blog/why-digital-operational-resilience-act-dora-compliance-requires-auditable-database-change-management/. It's Redgate's view, not a regulator's, so your compliance team should read it with two cautions. "A deployment error rolls back the whole migration" holds on SQL Server only for a migration that runs in a transaction; a non-transactional or mixed script keeps the statements that ran before the failure (file 22). And no Flyway feature provides role-based access: that comes from database permissions and GitHub's rules (section 5).
+
+Flyway Insights (preview) adds a hosted deployment history and DevOps Research and Assessment delivery metrics. Those are unrelated to the EU regulation (file 18).
+
+## 9. Keeping regulated data out of reports and prompts
+
+| Artifact | What it can contain | Rule |
+|---|---|---|
+| Dry-run report | The SQL of pending migrations (a `sql` field in the JSON) | Never write literal customer or account values into migrations |
+| Changes and drift reports | Object names and DDL before and after (`definitionBefore`, `definitionAfter`) | Object definitions only. Fine as evidence, but treat the DDL as sensitive if your policy says so |
+| Code review report | Findings that reference your SQL | Same as the dry-run report |
+| Static data | If you track reference tables in the schema model, their rows live as files in Git | Track reference data only. Whether a report shows row-level static data differences isn't documented on the pages checked. Read one real report before sharing it |
+| Workflow logs | Whatever a step prints | Never print query results. Keep secrets in secrets |
+| Your AI assistant | Whatever you paste | Paste object names, filenames, ticket keys and error text. Never rows or result sets (file 20) |
+
+Scrub before sharing a pack outside the regulated boundary. A starting search for literal values:
+
+> Not from Redgate docs — starting point, validate in your environment.
+
+```bash
+grep -rniE "(insert into|update .+ set|values *\()" evidence/<release-tag>/ || echo "no data-like statements found"
+```
+
+A clean result isn't proof. Have a person read the dry-run SQL.
+
+## 10. In daily use
+
+- Per release: the release owner confirms the pack is complete before tickets close.
+- Monthly: an access review of environment reviewers, code owners and token owners (file 15).
+- Quarterly: list every production deployment from GitHub run history, cross-check with `flyway info` on each production database, and collect each pack and every emergency change.
+- When asked "what do we show the auditor?", answer from section 2, then offer the pack in section 7.
+
+## 11. Limits
+
+- Flyway has no ticket-system integration. Traceability comes from naming, GitHub and each tracker's own integration (file 30).
+- The schema history table has no author or ticket column and can be edited.
+- Evidence in GitHub lasts only as long as your retention settings.
+- The changes report doesn't show production drift.
+- This file doesn't map to any specific regulation or article.
+
+## 12. Instructions for the AI assistant using this file
+
+- Use the ticket key in every branch, commit, pull request and migration name you suggest, and keep the regex case-sensitive. For tracker syntax, the enforcement check and change-request gating, use file 30.
+- Never propose a process where one person authors and approves the same production change.
+- Never accept regulated rows, result sets or comparison output. Ask for object names and error text.
+- Don't claim compliance with any regulation or give legal advice. Say the compliance team decides which controls apply.
+- Retention periods and audit scope are the team's decision. Ask, don't assume.
+- Keep the two meanings of DORA apart: the EU regulation here, DevOps Research and Assessment metrics in file 18.

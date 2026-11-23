@@ -1,0 +1,107 @@
+# ===========================
+# Flyway sandbox pipeline for Azure DevOps (self-hosted Windows agent)
+# Based on Flyway AutoPilot: https://github.com/red-gate/Flyway-AutoPilot-BackUp
+#
+# Runs when a change to migrations/ reaches main, or from Run pipeline.
+#   1. Check:  a report built on the Check database: changes, drift on Test, code review, SQL to run.
+#   2. Deploy: applies pending migrations to Test and saves a snapshot for the next drift check.
+#
+# Variable group "Flyway" (Pipelines > Library > + Variable group):
+#   FLYWAY_EMAIL, FLYWAY_TOKEN    your Redgate account email and a personal access token (lock it: secret)
+#     create the token at https://identityprovider.red-gate.com/personaltokens?returnUrl=https%3A%2F%2Fportal.red-gate.com%2Fproducts
+#     guide: https://documentation.red-gate.com/flyway/flyway-cli-and-api/tutorials/tutorial-personal-access-tokens
+#   TARGET_DATABASE_USERNAME, TARGET_DATABASE_PASSWORD (secret)    only for a SQL or database login
+#     (left out, Windows sign-in is used)
+# Optional: add an approval to the "test" environment (Pipelines > Environments > test >
+# Approvals and checks) so the deployment waits for someone to read the report.
+# ===========================
+
+name: Flyway-Sandbox-$(Build.BuildId)
+
+trigger:
+  branches:
+    include: [ main ]
+  paths:
+    include: [ migrations ]
+
+pr: none
+
+pool:
+  name: Default   # the agent pool your agent is in
+
+variables:
+  - group: Flyway
+  - name: FLYWAY_CLI_INSTALL_CHECK
+    value: 'false'   # 'true' installs the Flyway CLI on the agent if it's missing
+  - name: FLYWAY_INSTALL_DIRECTORY
+    value: 'C:\FlywayCLI'
+
+stages:
+  - stage: Test
+    displayName: Test
+    jobs:
+      - job: Check
+        displayName: Check (report on the Check database)
+        steps:
+          - checkout: self
+
+          - powershell: |
+              & .\Scripts\Flyway_DownloadAndInstallCLI.ps1
+              Write-Host "##vso[task.prependpath]$(FLYWAY_INSTALL_DIRECTORY)"
+            displayName: Flyway CLI - install check (optional)
+            condition: eq(variables['FLYWAY_CLI_INSTALL_CHECK'], 'true')
+
+          - powershell: flyway auth -IAgreeToTheEula "-email=$env:FLYWAY_EMAIL" "-token=$env:FLYWAY_TOKEN"
+            displayName: Flyway authentication
+            env:
+              FLYWAY_TOKEN: $(FLYWAY_TOKEN)
+
+          # Test and Check are environment names in flyway.toml.
+          # A blank login means Windows sign-in, so it's only passed when the group sets one.
+          - powershell: |
+              $login = @()
+              if ($env:TARGET_DATABASE_USERNAME) {
+                $login = "-user=$env:TARGET_DATABASE_USERNAME", "-password=$env:TARGET_DATABASE_PASSWORD",
+                         "-environments.Check.user=$env:TARGET_DATABASE_USERNAME", "-environments.Check.password=$env:TARGET_DATABASE_PASSWORD"
+              }
+              flyway check -dryrun -changes -drift -code -environment=Test "-check.buildEnvironment=Check" "-reportFilename=reports/Test-check.html" @login
+            displayName: Check report
+            env:
+              TARGET_DATABASE_PASSWORD: $(TARGET_DATABASE_PASSWORD)
+
+          - publish: reports
+            artifact: flyway-report-test
+            displayName: Publish the report
+            condition: always()
+            continueOnError: true
+
+      - deployment: Deploy
+        displayName: Deploy to Test
+        dependsOn: Check
+        environment: test
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - checkout: self
+
+                - powershell: |
+                    & .\Scripts\Flyway_DownloadAndInstallCLI.ps1
+                    Write-Host "##vso[task.prependpath]$(FLYWAY_INSTALL_DIRECTORY)"
+                  displayName: Flyway CLI - install check (optional)
+                  condition: eq(variables['FLYWAY_CLI_INSTALL_CHECK'], 'true')
+
+                - powershell: flyway auth -IAgreeToTheEula "-email=$env:FLYWAY_EMAIL" "-token=$env:FLYWAY_TOKEN"
+                  displayName: Flyway authentication
+                  env:
+                    FLYWAY_TOKEN: $(FLYWAY_TOKEN)
+
+                - powershell: |
+                    $login = @()
+                    if ($env:TARGET_DATABASE_USERNAME) {
+                      $login = "-user=$env:TARGET_DATABASE_USERNAME", "-password=$env:TARGET_DATABASE_PASSWORD"
+                    }
+                    flyway info migrate info -environment=Test "-migrate.saveSnapshot=true" @login
+                  displayName: Migrate Test
+                  env:
+                    TARGET_DATABASE_PASSWORD: $(TARGET_DATABASE_PASSWORD)

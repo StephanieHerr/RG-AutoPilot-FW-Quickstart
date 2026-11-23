@@ -1,0 +1,314 @@
+Flyway Enterprise AI library - file 30 of 32
+TICKETING AND CHANGE REQUESTS - JIRA, SERVICENOW, AZURE BOARDS AND GITHUB ISSUES
+Flyway reference library, October 2026. Generic guidance written for your AI assistant. It contains no data from your environment, and you shouldn't add any to these files.
+
+What this covers: How to tie database changes made with Flyway to your work items and change requests. It shows how one ticket key travels from branch to commit, migration, schema history, pull request and deployment record, and how to enforce it in the pull request check. It then covers Jira (including Jira Service Management), ServiceNow, Azure Boards and GitHub Issues one by one, attaching Flyway dry-run and check reports to a change, gating production on an approved change, segregation of duties and emergency changes.
+
+Not in this file: What auditors ask and the per-release evidence pack (file 17), building the pipelines and approvals (files 11 and 12), check modes and code rules (file 13), drift handling (file 14), the DBA's emergency runbook (file 15, section 4), and how each team's flow fits together (`28 - workflow architect - designing dev to PR to operations to pipeline for each team.txt`).
+
+Contents:
+1. How the link works
+2. The ticket key, end to end
+3. Enforcing the key in the pull request check
+4. Jira and Jira Service Management
+5. ServiceNow
+6. Azure Boards
+7. GitHub Issues and other trackers
+8. Attaching Flyway evidence to the change
+9. Gating production on an approved change
+10. Segregation of duties
+11. Emergency changes
+12. In daily use
+13. Limits
+14. Instructions for the AI assistant using this file
+
+## 1. How the link works
+
+For: release owners, DBAs, change managers and whoever owns the tracker integration.
+
+Flyway has no Jira, ServiceNow, Azure Boards or GitHub Issues connector. The link comes from a ticket key carried through the Git artifacts that each tracker's own GitHub integration already reads. Redgate's tutorial on associating commits with work items says to put the issue or work item ID in the commit message in Flyway Desktop, and the Git host links it after the push.
+
+Flyway's part is evidence: the migration file, the check report, the dry-run SQL and the schema history table in each database. The tracker and GitHub own linking and approval. Say it that way and nobody expects a feature that doesn't exist.
+
+Documentation: https://documentation.red-gate.com/flyway/database-development-using-flyway/capturing-development-database-schema-in-version-control/tutorial-associating-commits-with-issues-work-items-bug-ids
+
+## 2. The ticket key, end to end
+
+One convention, seven touchpoints. Use the form your tracker reads: `<ticket-key>` (for example `PROJ-123`) for Jira and ServiceNow-linked work, `AB#123` for Azure Boards, `#123` for GitHub Issues.
+
+| Touchpoint | Convention | What reads it |
+|---|---|---|
+| Branch | `feature/<ticket-key>-add-order-status`, `hotfix/<ticket-key>-fix-index` | Jira development panel; Azure Boards can create the branch from the work item |
+| Commit, first line | `<ticket-key> Add status column to orders` | Jira, Azure Boards (`AB#123`), GitHub closing keywords (`Fixes #123`) |
+| Flyway Desktop commit | Type the key in Desktop's commit message box. Desktop's AI features (preview) can draft commit messages; a person still checks the key | The Git host, after push |
+| Migration description | `flyway diff generate -diff.source=schemaModel -diff.target=migrations -diff.buildEnvironment=shadow -generate.types=versioned,undo -generate.description=<ticket-key>_add_order_status` (`generate` needs a `diff` first, chained or run before it), or put the key in Desktop's Description field when generating | The filename, and `flyway_schema_history` in every database the migration reaches |
+| Pull request title and description | Jira: key in the title. Azure Boards: `AB#123` in the description (titles don't link). GitHub Issues: `Closes #123` in the description | Each tracker's integration |
+| Deployment record | `-installedBy=${{ github.run_id }}` on deploy (file 12), the report named per run (`reports/<ticket-key>-<run-id>.html`), keys listed in the run summary | Schema history, GitHub deployment record, change request |
+| Change request | Keys, pull request link and run link in the description | ServiceNow or Jira Service Management |
+
+Migration descriptions can't safely hold `#`. Teams on Azure Boards or GitHub Issues use the number with a short prefix in filenames (`AB123_add_order_status`, `GH123_add_order_status`) and the tracker's own form in commits and pull requests.
+
+The schema history table is the last link. Flyway turns underscores in the description into spaces, and the key stays intact, so a DBA can answer "which ticket put this column in production?" without CI access:
+
+> Not from Redgate docs — starting point, validate in your environment.
+
+```sql
+-- the history table lives in the schema Flyway uses, often dbo
+SELECT installed_rank, version, description, installed_by, installed_on, execution_time, success
+FROM dbo.flyway_schema_history
+WHERE description LIKE N'%<ticket-key>%'
+ORDER BY installed_rank;
+```
+
+`installed_by` is the database login or the `installedBy` value the pipeline passed. It's a label, not an authenticated identity. Passing the run ID turns it into a pointer to the run, and the run holds the approval record (file 17, section 2).
+
+Keep descriptions to a key and a short technical phrase. Never put customer, account or other regulated values in a filename, description or commit message.
+
+## 3. Enforcing the key in the pull request check
+
+A convention nobody enforces decays. Fail the pull request when the branch, title or any new migration lacks a key. The match is case-sensitive: `proj-123` fails where `PROJ-123` passes, because bash `=~` is case-sensitive unless `nocasematch` is set. Store the pattern in a repository or organization variable so each team can use its tracker's form.
+
+> Not from Redgate docs — starting point, validate in your environment.
+
+```yaml
+# .github/workflows/ticket-key-check.yml
+name: ticket-key-check
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+permissions:
+  contents: read
+jobs:
+  ticket-key:
+    runs-on: <runner-label>
+    steps:
+      - uses: actions/checkout@v7   # pin to a full commit SHA
+        with:
+          fetch-depth: 0
+      - name: Require a ticket key
+        shell: bash
+        env:
+          BRANCH: ${{ github.head_ref }}
+          TITLE: ${{ github.event.pull_request.title }}
+          BODY: ${{ github.event.pull_request.body }}
+          BASE_REF: ${{ github.base_ref }}
+          KEY: ${{ vars.TICKET_KEY_REGEX || '[A-Z][A-Z0-9]+-[0-9]+' }}
+          FILE_KEY: ${{ vars.TICKET_FILE_KEY_REGEX || '[A-Z][A-Z0-9]+-[0-9]+' }}
+        run: |
+          [[ "$BRANCH" =~ $FILE_KEY ]] || { echo "::error::Branch has no ticket key"; exit 1; }
+          [[ "$TITLE $BODY" =~ $KEY ]] || { echo "::error::Pull request title or description has no ticket key"; exit 1; }
+          while IFS= read -r f; do
+            [ -z "$f" ] && continue
+            [[ "$(basename "$f")" =~ __${FILE_KEY}_ ]] || { echo "::error::$f has no ticket key at the start of its description"; exit 1; }
+          done < <(git diff --name-only --diff-filter=A "origin/$BASE_REF...HEAD" -- '*migrations/V*.sql')
+```
+
+- Values pass through `env`, not inline expressions, following GitHub's script-injection guidance.
+- For Jira, set `TICKET_KEY_REGEX` to require the key in the title only if your Jira linking relies on titles. For Azure Boards, `AB#[0-9]+` for the description and `AB[0-9]+` for files.
+- Make the job a required status check on `main` (file 17, section 5). Adjust the migrations path to your layout (file 02).
+- Use file content rules in `check -code` (file 13) and keep filename rules in this workflow.
+
+## 4. Jira and Jira Service Management
+
+Connect. A Jira site admin installs the GitHub for Jira app and connects your GitHub organization. Users need the "View development tools" permission to see the development panel.
+
+Link. With the app connected, a key in a branch name, commit message or pull request title links that work to the issue. The issue's development panel then shows branches, commits, pull requests, builds and deployments.
+
+Smart commits. A commit message can act on the issue: `<ticket-key> #comment Migration ready for review`, `#time 1h`, or `#<transition-name>`, on one line. The committer email must map to exactly one Jira user, so commits made by a pipeline service account (for example a pull request job that adds a generated migration) won't run smart commands unless that account is mapped. Decide whether you want automation to move issues at all.
+
+Deployments. The development panel can show deployments from GitHub Actions jobs that use GitHub environments. Atlassian documents a `.jira/config.yml` file that maps your environment names to Jira's environment types. Confirm the keys on Atlassian's current page before relying on them.
+
+Deployment gating (Jira Service Management). Atlassian documents deployment gating with GitHub: Jira Service Management change approvals gate a GitHub deployment, through a custom deployment protection rule on the GitHub environment and a `deploymentGating` block in `.jira/config.yml`. The detail wasn't readable on Atlassian's page when this library was written, so confirm the setup on the live page and test it on a non-production environment first. Custom deployment protection rules are a GitHub public preview and need GitHub Enterprise on private repositories (section 9).
+
+Documentation: https://support.atlassian.com/jira-software-cloud/docs/reference-issues-in-your-development-work/, https://support.atlassian.com/jira-software-cloud/docs/process-issues-with-smart-commits/, https://support.atlassian.com/jira-service-management-cloud/docs/use-deployment-gating-with-github/
+
+## 5. ServiceNow
+
+ServiceNow DevOps Change Velocity integrates with GitHub Actions in two documented ways.
+
+- A change step. The `ServiceNow/servicenow-devops-change` action, added as a step in the job, creates a change request and polls until it's approved. It authenticates with a DevOps integration token (or a DevOps integration user and password), the instance URL and the `sys_id` of the GitHub tool you register in ServiceNow, stored as secrets.
+- A deployment protection rule. ServiceNow is enabled as a custom deployment protection rule on the GitHub environment, optionally tied to the action through its `deployment-gate` input.
+
+Facts from the action's README that shape the design:
+
+| Setting | What it does | What to set |
+|---|---|---|
+| `change-request` | JSON of change request fields. All fields are supported except risk, impact and risk_impact_analysis. `setCloseCode` and `autoCloseChange` control closure | Keys, pull request and run links in `description`; the Flyway command in `implementation_plan`; roll-forward in `backout_plan`; build and check results in `test_plan` |
+| `interval` | Seconds between polls (default 100) | Leave, or lengthen |
+| `timeout` | Seconds before the step fails waiting for approval (default 3600, one hour) | Raise well above the default for a human change advisory board, for example `86400`, within your runner's job time limit |
+| `changeCreationTimeOut` | Seconds to wait for the change to be created (default 3600) | Leave |
+| `abortOnChangeStepTimeout` | Abort or continue when the wait times out (default true) | Keep true for production |
+| Outputs | `change-request-number`, `change-request-sys-id` | Use them to attach evidence and to write the change number into the run summary |
+
+- The action isn't supported in parallel jobs. Give it its own job.
+- It honors `HTTPS_PROXY` for a corporate proxy.
+- Risk and impact are set by ServiceNow's own rules, not by the pipeline. Agree with your change manager how DevOps changes are classified.
+- `job-name` must match the job's display name.
+
+Documentation: https://github.com/ServiceNow/servicenow-devops-change and https://docs.github.com/en/actions/how-tos/deploy/configure-and-manage-deployments/configure-custom-protection-rules
+
+## 6. Azure Boards
+
+Connect. Install the Azure Boards app for GitHub and connect the repository to one Azure DevOps organization. Microsoft says a repository should connect to one organization only.
+
+Link. `AB#123` in a commit message, or in the pull request description, links to work item 123. Titles and comments don't create links. `Fixes AB#123` moves the work item to its done state, but only when the pull request merges to the default branch. You can also create a GitHub branch from the work item.
+
+Gate. Azure Boards links work but doesn't gate a GitHub Actions deployment. Use GitHub environment approvals (section 9), or a composed API check against the work item's state. If your pipeline runs in Azure Pipelines instead, its environment approvals and checks are the gate; confirm the check types on Microsoft Learn.
+
+Documentation: https://learn.microsoft.com/en-us/azure/devops/boards/github/link-to-from-github
+
+## 7. GitHub Issues and other trackers
+
+GitHub Issues. A closing keyword in the pull request description (`close`, `closes`, `closed`, `fix`, `fixes`, `fixed`, `resolve`, `resolves`, `resolved`, followed by `#123`) links the issue and closes it on merge. It acts only on pull requests to the default branch. The deployment record lives on the GitHub environment.
+
+Any other tracker. Repository autolinks turn a prefix such as `CHG-` into a link to your tracker's URL in commits, issues and pull requests. Prefixes must not overlap: `TICKET` and `TICK` both match `TICKET123`.
+
+Documentation: https://docs.github.com/en/issues/tracking-your-work-with-issues/using-issues/linking-a-pull-request-to-an-issue and https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/managing-repository-settings/configuring-autolinks-to-reference-external-resources
+
+## 8. Attaching Flyway evidence to the change
+
+Produce it. One `check` call writes all its results into one HTML report with a JSON copy. Run it against production with the read-only check account (file 15, section 8):
+
+> Not from Redgate docs — starting point, validate in your environment.
+
+```bash
+flyway check -changes -drift -dryrun -code \
+  -configFiles=ci/production.toml,ci/build.toml \
+  -environment=production -check.buildEnvironment=build \
+  -reportFilename="reports/<ticket-key>-${GITHUB_RUN_ID}.html"
+```
+
+- The dry-run SQL path follows the `dryRunOutput` setting. Redgate's migrations page says the changes report and dry-run script "can also be kept as a deployment record". Its check page names "a record of what the check results were for audit or reporting purposes".
+- On GitHub, Redgate's `migrations/checks` action runs the same checks, uploads the report as an artifact, links it in the step summary, and exposes outputs such as `drift-detected`, `changed-object-count` and `code-violation-count` (file 12).
+- On GitHub Enterprise Server, newer artifact actions aren't supported, so the action's upload may fail. Run the CLI and use the artifact action version your server supports (file 12).
+
+What goes where:
+
+| Tracker | Evidence |
+|---|---|
+| ServiceNow | The change request fields (section 5), plus the HTML report and dry-run SQL attached to the change request |
+| Jira Service Management | A comment on the change with the run link and report artifact link; attach files if your retention needs them |
+| Jira, Azure Boards, GitHub Issues | A comment with the run link. The development panel or deployment record shows the rest |
+
+Attach rather than link when the tracker keeps records longer than GitHub. GitHub keeps run artifacts for 90 days by default, and Redgate's actions default their report artifacts to 7 days (file 17, section 6).
+
+Attaching to a ServiceNow change, using the action's `change-request-sys-id` output and ServiceNow's Attachment API. The endpoint shape comes from third-party examples, so confirm it on ServiceNow's REST API reference and with your instance admin:
+
+> Not from Redgate docs — starting point, validate in your environment.
+
+```bash
+curl --fail -X POST \
+  "$SN_INSTANCE_URL/api/now/attachment/file?table_name=change_request&table_sys_id=$CR_SYS_ID&file_name=flyway-report.html" \
+  -u "$SN_USER:$SN_PASSWORD" -H "Content-Type: text/html" \
+  --data-binary @"reports/<ticket-key>-${GITHUB_RUN_ID}.html"
+```
+
+Flyway Insights (preview) can hold a hosted deployment history if you turn it on for chosen environments (file 18). It's a useful link on a change, not a replacement for the attached report.
+
+## 9. Gating production on an approved change
+
+All options are GitHub-side or tracker-side. Flyway runs after the gate opens.
+
+| Option | How it gates | Notes |
+|---|---|---|
+| GitHub environment required reviewers | A named person approves the `production` job; secrets are withheld until then | Turn on prevent self-review and disable admin bypass. On GitHub Team, required reviewers and the bypass setting apply to public repositories only, so a private repository needs GitHub Enterprise (Cloud or Server). Deployment branch rules and environment secrets work on Team private repositories |
+| ServiceNow change step | The job waits until the change is approved | Raise `timeout` for a change advisory board |
+| ServiceNow or Jira Service Management protection rule | The environment waits for the tracker | GitHub public preview; up to six rules per environment; times out after 30 days; needs GitHub Enterprise on private repositories |
+| Composed API check | A step inside the gated job asks the tracker for the change state and fails unless approved | Any tracker. Run it in the deploy job so it re-checks at deploy time |
+
+Keep a GitHub environment approval even with a tracker gate: it records who released the job, and it's where production secrets live.
+
+The production half of a release workflow with a ServiceNow change. File 12, section 12 has the full release workflow, the package step and the runner choices:
+
+> Not from Redgate docs — starting point, validate in your environment.
+
+```yaml
+jobs:
+  pre-prod-evidence:
+    runs-on: <runner-label>
+    environment: production-read-only   # read-only check account, no approval
+    steps:
+      # setup-flyway and checkout as in file 12
+      - uses: red-gate/flyway-actions/migrations/checks@v2
+        with:
+          target-environment: production
+          build-environment: build
+          build-ok-to-erase: 'true'
+          extra-args: -configFiles=ci/production.toml,ci/build.toml
+
+  change:
+    needs: pre-prod-evidence
+    name: change
+    runs-on: <runner-label>
+    steps:
+      - id: cr
+        uses: ServiceNow/servicenow-devops-change@<release-tag>   # pin to a full commit SHA
+        with:
+          devops-integration-token: ${{ secrets.SN_DEVOPS_INTEGRATION_TOKEN }}
+          instance-url: ${{ secrets.SN_INSTANCE_URL }}
+          tool-id: ${{ secrets.SN_ORCHESTRATION_TOOL_ID }}
+          context-github: ${{ toJSON(github) }}
+          job-name: 'change'
+          change-request: '{"setCloseCode":"true","attributes":{"short_description":"<ticket-key> database release","implementation_plan":"flyway migrate -environment=production via the approved pipeline run","backout_plan":"Roll forward with a new migration","test_plan":"Build from scratch, code review, change report and dry run attached"}}'
+          interval: '100'
+          timeout: '86400'
+      - run: echo "Change ${{ steps.cr.outputs.change-request-number }}" >> "$GITHUB_STEP_SUMMARY"
+
+  deploy-prod:
+    needs: change
+    runs-on: <runner-label>
+    environment: production           # required reviewers, deploy account
+    concurrency: { group: flyway-production, cancel-in-progress: false }
+    steps:
+      # setup-flyway and the tested package as in file 12
+      - uses: red-gate/flyway-actions/migrations/deploy@v2
+        with:
+          target-environment: production
+          extra-args: -configFiles=ci/production.toml -installedBy=${{ github.run_id }}
+```
+
+The deploy action runs a drift check before migrating and saves a snapshot by default. Never let this run with no named human approving: the change approver and the environment reviewer are people.
+
+## 10. Segregation of duties
+
+Auditors look for different people as author, reviewer and production approver, with no bypass. File 17, section 5 has the GitHub settings. For the tracker:
+
+- The person who raised or implemented the ticket doesn't approve the change request.
+- The change approver and the GitHub environment reviewer can be the same role, but never the pull request author.
+- A pipeline service account may create and close change requests. It never approves them.
+- The schema history "who" is the deploy login or run ID, not the approver. The approver lives in the tracker and in GitHub's environment approval record.
+- Test it: try to approve your own change and your own production run. Both should be refused. Keep the evidence.
+
+## 11. Emergency changes
+
+Two routes, matching file 15, section 4.
+
+Fast-track hotfix. Raise an emergency change (your ServiceNow or Jira Service Management process decides its type and approvers). Branch `hotfix/<ticket-key>-<short-description>`, one migration with the key, a pull request approved by someone other than the author, then the production job with the dry run. Agree with your change manager how the pipeline's change step treats an emergency: a separate change type, a shorter approval path, or a change raised by hand and checked by the composed API step.
+
+Break-glass, a change made directly in production. Raise a retrospective change record the same day with the incident key, who made the change, when and the exact SQL. Run `flyway check -drift` against `production` and attach the drift report. Then incorporate the change as a migration named with the incident key, promote it through `test` and `uat`, and close the record only after that migration reaches production and the next drift check is clean.
+
+## 12. In daily use
+
+- "Which ticket added this column?" Section 2's query, or search the migrations folder for the key.
+- "The change has been waiting an hour and the job failed." The ServiceNow step hit its default timeout. Raise `timeout`, and re-run once the change is approved.
+- "My commit didn't move the Jira issue." Check the committer email maps to exactly one Jira user, and the smart commit is on one line.
+- "`Fixes AB#123` didn't close the work item." It acts on merge to the default branch only.
+- "Attach the evidence to the change." Section 8.
+
+## 13. Limits
+
+- Flyway has no tracker connector. Traceability rides on Git, GitHub and each tracker's own integration.
+- The schema history table has no ticket or approver column; the key lives in the description.
+- GitHub custom deployment protection rules are a public preview, and on private repositories they, required reviewers and admin-bypass control need GitHub Enterprise.
+- The ServiceNow action can't set risk or impact and doesn't run in parallel jobs.
+- Jira deployment mapping keys, Jira Service Management gating setup, the ServiceNow Attachment API shape and Azure Pipelines check types weren't confirmed on vendor pages for this library. Confirm them before production use.
+
+## 14. Instructions for the AI assistant using this file
+
+- Check the repository and the decision log (file 01) for the team's tracker, key format and change process. If none is recorded, ask which tracker they use before suggesting syntax.
+- Use the ticket key in every branch, commit, pull request and migration name you suggest. Keep the regex case-sensitive.
+- Never describe Flyway as integrating with a tracker directly. Name the GitHub or tracker feature that does the linking or gating.
+- Never propose a flow where one person authors and approves the same production change, or where automation approves a change.
+- Mark vendor details listed in section 13 as needing confirmation when you use them.
+- Mark code you add that isn't in this file with the not-from-Redgate-docs line.
+- Answer in the language the person writes in. Keep commands, keys, file names and error text in English.

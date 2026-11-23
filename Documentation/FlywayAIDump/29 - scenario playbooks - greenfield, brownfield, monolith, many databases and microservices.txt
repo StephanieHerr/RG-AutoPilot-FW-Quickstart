@@ -1,0 +1,273 @@
+Flyway Enterprise AI library - file 29 of 32
+Scenario playbooks - greenfield, brownfield, monolith, many databases and microservices
+Flyway reference library, October 2026. Generic guidance written for your AI assistant. It contains no data from your environment, and you shouldn't add any to these files.
+
+What this covers: Fourteen situation cards your AI assistant matches a team against before it recommends anything. Each card lists the signals the assistant can detect in a repository or conversation, the recommended setup, the first three steps, the pitfalls, and which files to open next. Cards combine: a brownfield monolith on Managed Instance with a regulated release uses four of them.
+
+Not in this file: The intake and the reference designs these cards point to (file 28, workflow architect), the SSDT move in depth (file 06, moving off SSDT and DACPAC deployments), baselining and the script-runner cut-over in detail (file 07), moving off SQL Change Automation or SQL Source Control (file 31), version collisions (file 09), pipeline YAML (file 12), and change requests (file 30).
+
+Contents:
+1. How to use the cards
+2. Greenfield
+3. Brownfield with history
+4. Brownfield replacing an in-house script runner
+5. Coming from SSDT
+6. Monolith with many teams and per-team schemas
+7. Several databases with cross-database references and linked servers
+8. Standalone databases
+9. Database per service
+10. A blend
+11. Azure SQL Database, Managed Instance and on-premises SQL Server
+12. A team with no Git experience
+13. An advanced Git team
+14. Regulated release with change requests
+15. Emergency hotfix culture
+16. In daily use
+17. Limits
+18. Instructions for the AI assistant using this file
+
+## 1. How to use the cards
+
+Read the repository first (file 28, section 2), then pick every card whose signals match. Apply them in this order: architecture cards (sections 6 to 10), then history cards (2 to 5), then platform (11), then people and process (12 to 15). Where two cards disagree, the stricter one wins for shared environments and production. Record which cards applied in your decision log (file 01).
+
+## 2. Greenfield
+
+**Signals:** a fresh `flyway.toml` from `flyway init` or Desktop with default settings, no real environments, an empty `migrations/` folder, no production database yet.
+
+**Recommended setup:** reference design A or E in file 28. Dedicated development and shadow databases, one timestamp-based numbering scheme, `validateMigrationNaming = true`, no baseline. Pull request checks from the first commit.
+
+**First three steps:**
+1. Settle naming and the shadow before the first migration (file 09, file 10).
+2. Write or generate the first migration on a branch and open a pull request.
+3. Get the pull request check green on a build database before any shared environment exists (file 12).
+
+**Pitfalls:** copying `baselineOnMigrate` from a brownfield template, which on a new estate only hides a wrong-target connection. Check the deploy action's `baseline-on-migrate` input too (file 12). Designing a branching strategy before anyone has merged. Treating the fresh project's defaults as decisions the team made.
+
+**Open:** 08, 09, 10, 12, 28.
+
+## 3. Brownfield with history
+
+**Signals:** production exists and has no `flyway_schema_history` table; change scripts live in folders or tickets; test and UAT may not match production.
+
+**Recommended setup:** a baseline that represents production, then versioned migrations from there. On on-premises SQL Server, use Backup as Baseline first, through the shadow's `backup` provisioner (preview) (file 07, section 4; https://documentation.red-gate.com/flyway/learn-more-about-flyway/how-to-articles/use-a-sql-server-backup-to-baseline-a-database). Where that isn't possible, generate a baseline script in Desktop or the CLI (https://documentation.red-gate.com/flyway/database-development-using-flyway/generating-migrations/tutorial-generate-a-baseline-script). If the history lives in a SQL Change Automation project (`__MigrationLog`, numbered migrations with header IDs) or a SQL Source Control repository, use file 31 alongside this card.
+
+**First three steps:**
+1. Capture a production-representative schema into the schema model and fix or filter invalid objects.
+2. Create the baseline (backup or script) and prove the shadow builds from it, including filegroups and any cross-database references.
+3. Mark each downstream database as already at that version with `flyway baseline`, starting with `test`, and confirm with `info`. Environments that are out of step can each be baselined at their own version, with comparison-generated migrations bringing the lagging ones forward (https://documentation.red-gate.com/flyway/deploying-database-changes-using-flyway/baselining-your-downstream-environments).
+
+**Pitfalls:** confusing baseline migrations (`B` scripts, for new environments) with the `baseline` command (for existing ones). Filegroups that exist in production but not on the shadow. Baselines that reference other databases the shadow can't reach. A whole-schema dump as version 1 instead of a baseline.
+
+**Open:** 07, 10, 14, 16, and 31 for SQL Change Automation or SQL Source Control.
+
+## 4. Brownfield replacing an in-house script runner
+
+**Signals:** a numbered script folder, a home-grown runner, its own tracking table, pre- and post-deployment hooks in a scripting language.
+
+**Recommended setup:** run side by side, then cut over at one agreed version. The runner's history stays where it is; Flyway starts from a baseline at the cut-over point. The runner's hooks become Flyway callbacks.
+
+**First three steps:**
+1. Compare the runner's tracking table with what's actually in each database, so the baseline matches reality.
+2. Pick the cut-over version and baseline every environment at it (card 3).
+3. Route new changes through Flyway only. Make the runner read-only for that database, then retire it once one full release has gone through Flyway.
+
+**Pitfalls:** two tools changing one database at the same time. Importing years of old scripts as versioned migrations, which replays history Flyway never needed. Leaving the old runner's credentials active after cut-over.
+
+**Open:** 07, 11, 15.
+
+## 5. Coming from SSDT
+
+**Signals:** `.sqlproj` files, publish profiles, `.dacpac` builds, `sqlpackage` in pipelines, SQLCMD variables.
+
+**Recommended setup:** choose a path in file 06: layer Flyway over SSDT so developers keep Visual Studio, phased coexistence, or a full move. Redgate documents the layered route (https://documentation.red-gate.com/flyway/learn-more-about-flyway/troubleshooting/working-with-microsoft-sql-server-database-ssdt-projects). Reference design D in file 28 fits teams that won't run Flyway tooling.
+
+**First three steps:**
+1. Build a dedicated development database from the DACPAC.
+2. Create the Flyway project, capture the schema model and baseline production (card 3).
+3. Generate the first migration from the next DACPAC change and review it in a pull request.
+
+**Pitfalls:** the SSDT refactor log table ending up in the schema model (filter it). SQLCMD variables that need to become placeholders. `sqlpackage` and Flyway both deploying to one database. No end date for coexistence.
+
+**Open:** 06, 08, 28.
+
+## 6. Monolith with many teams and per-team schemas
+
+**Signals:** one large database, many schema folders in `schema-model/`, many authors in the Git log, version collisions or Ignored migrations after merges.
+
+**Recommended setup:** reference design B in file 28. Usually one project and one migration chain, timestamped versions, the collision check, `CODEOWNERS` per schema folder, and a release train if releases are batched (https://www.red-gate.com/hub/product-learning/flyway/supporting-monolithic-database-deployment-with-flyway/). Split into one project per schema set only when the schemas are truly independent; each project then gets its own history table.
+
+**First three steps:**
+1. Map which team owns which schemas, and which objects cross schema boundaries.
+2. Turn on the collision check and `CODEOWNERS` before changing anything else.
+3. Decide where migrations are generated: each developer on a branch, or one release owner at merge (file 28, section 6).
+
+**Pitfalls:** Flyway doesn't stop one project touching another project's schema, and `clean` on a build database drops everything in a project's listed schemas. Cross-schema views make separate projects painful. Using `*:ignored` to silence late merges.
+
+**Open:** 09, 13, 28.
+
+## 7. Several databases with cross-database references and linked servers
+
+**Signals:** three-part names, synonyms pointing at other databases, linked servers or four-part names, several `flyway.toml` files.
+
+**Recommended setup:** reference design F in file 28. One project per database, shadows on the same instance as the databases they reference, providers deployed before consumers, every change backward-compatible. Redgate's Product Learning article on cross-server dependencies covers the patterns (https://www.red-gate.com/hub/product-learning/flyway/dealing-with-cross-server-database-dependencies-in-flyway-projects/); it uses older syntax, so translate it to TOML. Linked server names that differ per environment go in placeholders (https://documentation.red-gate.com/flyway/reference/tutorials/tutorial-using-placeholders-in-sql-migration-scripts-for-linked-servers).
+
+**First three steps:**
+1. Draw the dependency graph: which database references which, and through what.
+2. Place shadow and build databases where those references resolve, or use a shadow restored by the `backup` provisioner (preview) on-premises.
+3. Fix the release order in the pipeline and test it on `test`.
+
+**Pitfalls:** shadow builds failing on a missing referenced database. Circular references. A baseline that references a database that's still changing. Azure SQL Database doesn't support cross-database names (card 11).
+
+**Open:** 10, 11, 16, 28.
+
+## 8. Standalone databases
+
+**Signals:** databases with no references to each other, often owned by different teams; or many copies of one schema (tenants, regions).
+
+**Recommended setup:** one project per database, each with its own pipeline from one shared template. No release ordering. For many copies of one schema, use one project with many environments instead (https://documentation.red-gate.com/flyway/deploying-database-changes-using-flyway/rolling-out-updates-from-a-single-schema-to-multiple-production-databases/tutorial-fleet-rollout-with-migrations-based-deployment).
+
+**First three steps:**
+1. Confirm there are no hidden references (synonyms, views, jobs).
+2. Create a project per database from the shared skeleton.
+3. Point each at the central reusable workflow.
+
+**Pitfalls:** grouping unrelated databases into one project or one release, so one team's change waits on another. Copying pipelines rather than calling one template.
+
+**Open:** 10, 12, 28.
+
+## 9. Database per service
+
+**Signals:** each service repository has its own database folder or project; databases share an instance but not a schema.
+
+**Recommended setup:** reference design E in file 28. The Flyway project lives in the service repository; every repository calls one reusable workflow pinned to a tag. Developer-side generation is fine because one team owns each chain.
+
+**First three steps:**
+1. Agree the shared `flyway.toml` skeleton and the reusable workflow.
+2. Name the history table per service where services share an instance.
+3. Onboard one service end to end, then the rest.
+
+**Pitfalls:** a cross-service view or synonym turning this into card 7. Reference data duplicated across services. Templates forked per repository.
+
+**Open:** 10, 12, 28.
+
+## 10. A blend
+
+**Signals:** a core shared database, satellite service databases, reporting databases, maybe a fleet.
+
+**Recommended setup:** reference design F in file 28. Classify each database and apply its card: card 6 to the core, card 9 to the satellites, card 7 to anything with references, card 8 to the rest. One central pipeline template, parameterized by project path, keeps gates identical.
+
+**First three steps:**
+1. List every database with its owner, references and target platform.
+2. Assign each a card and record it in your decision log (file 01).
+3. Start with the database that has the fewest dependencies.
+
+**Pitfalls:** one design forced on every database. Starting with the hardest database.
+
+**Open:** 28, plus the files of each card used.
+
+## 11. Azure SQL Database, Managed Instance and on-premises SQL Server
+
+**Signals:** `database.windows.net` in connection strings, Entra authentication settings, Managed Instance host names, on-premises instance names, self-hosted runner labels.
+
+| Topic | Azure SQL Database | Managed Instance | On-premises |
+|---|---|---|---|
+| Cross-database three- and four-part names | Not supported | Supported | Supported |
+| Linked servers, SQL Server Agent | No | Yes | Yes |
+| Runner | GitHub-hosted works when the network path allows | Usually self-hosted, private network | Self-hosted inside the network |
+| Authentication | Entra: service principal, OIDC with `azure/login` and an access token, managed identity on an Azure-hosted runner, SQL logins | Same as Azure SQL Database | Windows integrated on a self-hosted runner, or SQL logins |
+| Shadow and build | A dedicated Azure SQL database with `clean`, or a container with the engine version set explicitly | A database on the instance with `clean` or `create-database` (preview) | `clean`, or the `backup` provisioner (preview) for Backup as Baseline, plus the other provisioners (preview) |
+
+Microsoft Learn lists what each platform rejects (https://learn.microsoft.com/en-us/azure/azure-sql/database/transact-sql-tsql-differences-sql-server, https://learn.microsoft.com/en-us/azure/azure-sql/managed-instance/transact-sql-tsql-differences-sql-server). The `backup` provisioner (preview) restores from a `.bak` path the server can reach, and Managed Instance restores only from URL, so don't plan on it there. Redgate's development database page suggests serverless or elastic pools to cut cost on Azure SQL Database, and notes a resumed serverless database can return error 40613 once; retry (https://documentation.red-gate.com/flyway/database-development-using-flyway/database-devops-practices/development-database-environment-configuration). Entra options are in Redgate's tutorial (https://documentation.red-gate.com/flyway/database-development-using-flyway/connecting-to-environments/tutorial-connect-using-microsoft-entra-id). The Azure Key Vault resolver is expected to use the Azure SDK's standard credential handling, so an `azure/login` sign-in on the runner should be picked up, but the resolver page doesn't describe sign-in; prove it with a test secret in the proof of concept (https://documentation.red-gate.com/flyway/reference/configuration/environments-namespace/environment-resolvers-namespace/azure-key-vault-resolver).
+
+**First three steps:**
+1. List each target's platform and network path, and pick the runner for each.
+2. Pick the authentication method per platform (file 04, file 12).
+3. If you build in a container for an Azure SQL Database target, keep one check stage against a real Azure SQL database.
+
+**Pitfalls:** a container build passing while the Azure deployment fails on unsupported syntax. Filegroup or file DDL in baselines on Managed Instance. Windows authentication assumed on Azure.
+
+**Open:** 04, 10, 12, 16.
+
+## 12. A team with no Git experience
+
+**Signals:** scripts on file shares or in email, no `.git` history for the database, questions about what a branch is.
+
+**Recommended setup:** Flyway Desktop's built-in Git (clone, commit, push, pull, resolve), trunk with very short branches, dedicated databases, reference design A. Don't design a branching strategy yet.
+
+**First three steps:**
+1. Check Git prerequisites: one `git` on the path (`where git` returns one path), `git status`, `git fetch` and `git push` working outside Flyway, the default branch name matching the remote, and one authentication method (Git Credential Manager for HTTPS).
+2. Clone the repository first, then create or open the Flyway project inside it. If Desktop can't reach GitHub through the corporate proxy, clone with GitHub Desktop or the Git CLI and use "Open local project" in Desktop.
+3. Practice one full loop together: change, save, generate, commit, pull request, merge.
+
+**Pitfalls:** pulling without saving first. Committing straight to `main`. Resolving conflicts by deleting the other person's change.
+
+**Open:** 04, 08, 23.
+
+## 13. An advanced Git team
+
+**Signals:** reusable workflows, rulesets, per-branch environments, rebasing habits, CLI-first developers.
+
+**Recommended setup:** the CLI loop or VS Code tasks, a database per branch through the Git resolver (https://documentation.red-gate.com/flyway/database-development-using-flyway/switching-between-branches/tutorial-create-a-new-database-per-branch), pull request generation (design D) where it helps, and the Flyway MCP server (preview) with review gates.
+
+**First three steps:**
+1. Agree the rules Git can't enforce: never rewrite a migration after a shared environment ran it, and never force-push over merged migrations.
+2. Add the collision check and a build from scratch to required checks.
+3. Move the pipeline into one reusable workflow.
+
+**Pitfalls:** long-lived branches carrying their own migrations. GitFlow hotfixes that sort out of order on `develop` (https://www.red-gate.com/hub/product-learning/flyway/how-to-fix-or-avoid-ignored-migrations-in-flyway/, older syntax). Rebasing that renames migration files.
+
+**Open:** 08, 09, 12, 20.
+
+## 14. Regulated release with change requests
+
+**Signals:** a change advisory board, ServiceNow or Jira change tickets, audit findings, segregation-of-duties rules.
+
+**Recommended setup:** reference design C in file 28. The ticket key travels from branch to pull request to deployment. A dry-run preview against production is attached to the change request. Production waits on both the change request and a GitHub environment approval, and developers hold no production secrets. If you use Flyway Insights (preview), turn it on only for the environments you choose (file 18).
+
+**First three steps:**
+1. Agree the evidence list with the auditors (file 17).
+2. Wire the change request gate (file 30).
+3. Check the GitHub plan: required reviewers on private repositories need GitHub Enterprise (file 28, section 7 has the GitHub Team alternative).
+
+**Pitfalls:** treating the schema history table as the audit log. A preview prepared before the last merge. Approvers who are also the authors.
+
+**Open:** 11, 15, 17, 30.
+
+## 15. Emergency hotfix culture
+
+**Signals:** drift reports full of objects nobody scripted, DBAs changing production directly, "we fix it live and tidy up later".
+
+**Recommended setup:** a fast path that is still the pipeline: a hotfix branch from the release tag, a new versioned migration, an expedited approval with the same preview, then a merge back to `main`. When someone has to change production by hand in an emergency, bring the change into source control so the next deployment doesn't undo it (https://documentation.red-gate.com/flyway/deploying-database-changes-using-flyway/checking-production-environments-for-drift/tutorial-resolve-drift-by-incorporating-it-migrations-based-deployments).
+
+**First three steps:**
+1. Write the emergency path into the operations runbook (file 15) with named approvers.
+2. Run a scheduled drift check on production (file 14).
+3. After every hand change, capture it as a migration within the incident.
+
+**Pitfalls:** marking the captured migration as applied with `skipExecutingMigrations` without first running `info` to confirm it's the only pending one, because with `target` it marks every pending migration up to the target as applied. A hotfix version that's lower than unreleased migrations on `main`, which needs a deliberate out-of-order decision (file 11). State-based deployments reverting the hand change.
+
+**Open:** 11, 14, 15, 22.
+
+## 16. In daily use
+
+People ask: "Which of these are we?" (the assistant reads the repository and names the cards). "We're brownfield on Managed Instance with three teams" (cards 3, 6 and 11 together). "A new team is joining from SSDT" (card 5). "We're on SQL Change Automation" or "We use SQL Source Control" (card 3, with file 31). "Someone fixed production last night" (card 15).
+
+## 17. Limits
+
+- Flyway deploys one project at a time; cross-database release order is the pipeline's job.
+- Flyway doesn't stop one project changing another project's schema.
+- Azure SQL Database has no cross-database names or linked servers, whatever the tooling.
+- The `backup`, `create-database`, `snapshot` and `docker` provisioners are (preview) on their reference pages (file 25). Backup as Baseline relies on the `backup` provisioner (preview) and remains this library's preferred baseline route (file 07, section 4).
+- Cards are starting points. A team's real constraints override them, recorded in your decision log (file 01).
+
+## 18. Instructions for the AI assistant using this file
+
+- Detect signals from the repository before asking; name every matching card and say why.
+- Never assume a fresh `flyway.toml` means the team has made decisions.
+- Combine cards in the order in section 1; the stricter card wins for shared environments and production.
+- For brownfield, always baseline; never import years of old scripts as versioned migrations.
+- For cross-database work, check the platform first: Azure SQL Database doesn't support cross-database names.
+- Never suggest two deployment tools changing one database at once beyond an agreed, dated coexistence.
+- Before suggesting `skipExecutingMigrations`, require an `info` showing only the intended migration is pending.
+- Keep production behind a human approval in every card.
+- Record the cards applied and the decisions in your decision log (file 01).

@@ -1,0 +1,266 @@
+Flyway Enterprise AI library - file 15 of 32
+The operations workflow - DBA release duties, emergency changes and daily runbooks
+Flyway reference library, October 2026. Generic guidance written for your AI assistant. It contains no data from your environment, and you shouldn't add any to these files.
+
+What this covers: What changes for a lead DBA and the DevOps engineers when database changes move from hand-reviewed script packages to pull requests, then the runbooks that follow from it: review duty in GitHub, release day, an emergency change made in production, an environment refresh, "what changed on UAT since Tuesday?", the start-my-day routine for a DBA and for a developer, the permissions model, monitoring after a deploy, and handover.
+
+Not in this file: building the pipeline (files 11 and 12), drift and snapshot detail (file 14), reading errors (file 22), environments, accounts and secrets (file 10), provisioning dev and test databases (file 16), audit evidence (file 17), Flyway Insights (file 18), Redgate Monitor and the compare tools (file 19), the mode scripts that drive these runbooks (file 27).
+
+Contents:
+1. What changes for the DBA
+2. Review duty in GitHub
+3. Release-day runbook
+4. An emergency change in production
+5. Refreshing a test or UAT environment
+6. "What changed on UAT since Tuesday?"
+7. Start-my-day routines
+8. The permissions model
+9. Monitoring after a deploy
+10. Handover and on-call notes
+11. In daily use
+12. Limits
+13. Instructions for the AI assistant using this file
+
+## 1. What changes for the DBA
+
+Environment names follow this library's convention: `development`, `shadow`, `build`, `test`, `uat`, `production`. The assistant maps them to your real names from your repository, and your decision log can record who owns each runbook (file 01).
+
+| Today (script packages and your script runner) | With Flyway and GitHub |
+|---|---|
+| You review a package of SQL files someone assembled | You review a pull request: the migration, its undo script, the schema model diff and the automated check results (files 08 and 13) |
+| The package is run by hand against each environment | The pipeline runs the same files that were reviewed, in order, once per environment (file 11) |
+| History lives in the script runner, if anywhere | Each database has its own schema history table, and Git holds who changed what and why |
+| You find out about changes made outside the process by accident | A drift check compares production with the state Flyway last deployed (file 14) |
+| Approval is an email or a ticket comment | Approval is a recorded action on a protected GitHub environment (file 17) |
+
+Your duty moves from assembling and running to reviewing and approving. The risk moves too: a weak review rule now reaches every database the pipeline touches, so the gates in sections 2 and 8 matter more than the runbooks.
+
+## 2. Review duty in GitHub
+
+Make the review automatic, not a habit. GitHub's code owners feature requests a review from the right people when a pull request touches files they own.
+
+Verified against GitHub's "About code owners" page:
+
+- Create a file named `CODEOWNERS` in `.github/`, the repository root or `docs/`. GitHub uses the first one it finds, in that order. It must be on the pull request's base branch.
+- Each line is a path pattern followed by owners, as `@org/team-name` or `@username`. Owners need write access, and a team must be visible.
+- The last matching pattern wins. If you want two teams to share a path, put both on the same line.
+- With "Require review from Code Owners" turned on in branch protection (or a ruleset), an approval from any one of the owners satisfies the rule.
+- Protect the file itself by naming an owner for it.
+- Paths are case-sensitive, even if your workstations aren't.
+- Lines with invalid syntax are skipped, and an unknown team means no owner is assigned. Open the file in GitHub after each change and look for highlighted errors.
+
+> Not from Redgate docs — starting point, validate in your environment.
+
+```text
+# Every database change needs the database team
+/<project-folder>/migrations/     @<org>/<dba-team>
+/<project-folder>/schema-model/   @<org>/<dba-team>
+/<project-folder>/callbacks/      @<org>/<dba-team> @<org>/<platform-team>
+# Gates and configuration need the platform team
+/<project-folder>/flyway.toml     @<org>/<platform-team>
+/<project-folder>/ci/             @<org>/<platform-team>
+/.github/workflows/               @<org>/<platform-team>
+/.github/CODEOWNERS               @<org>/<platform-team>
+```
+
+Callbacks run with the deploying account's rights, so treat a callback change like a production change. Check the folder names against your own project layout (file 02).
+
+What the reviewer reads in a pull request:
+
+1. The migration and its undo script. Is it one logical change, with a ticket key in the name?
+2. The `check -code` results (file 13), and whether any finding was suppressed.
+3. The version number against open pull requests from other teams (file 09).
+4. For anything touching production data, how the change behaves on a table with real volume. Flyway can't tell you that.
+
+File 27 has a review mode with a pull request review card. Say "review this pull request" and the assistant walks the card with you.
+
+## 3. Release-day runbook
+
+Reference flow: change merged, validation and safety checks, deployment preview (dry run), human approval, `migrate`, verification, snapshot, evidence.
+
+Before:
+1. The release commit is tagged, and the ticket keys in it are listed in the run summary (file 17).
+2. The same build deployed successfully to `uat`.
+3. The pre-deployment checks for `production` ran: code review, changes report, dry-run script and a drift check. The approver has read them. The checks use the read-only account (section 8).
+4. The drift result is clean, or every finding has a recorded decision (file 14).
+5. The recovery route is agreed. Production is fix-forward by default. Undo is a lower-environment and last-resort tool (file 14).
+6. Two approvers are available, and whoever watches monitoring knows the window.
+
+> Not from Redgate docs — starting point, validate in your environment.
+
+```bash
+flyway info -environment=production -configFiles=ci/production-check.toml -outputType=json > evidence/info-before.json
+flyway check -dryrun -environment=production -configFiles=ci/production-check.toml "-dryRunOutput=evidence/dryrun.sql"
+flyway check -drift "-check.failOnDrift=true" -environment=production -configFiles=ci/production-check.toml
+```
+
+Run drift as its own command. Redgate's docs say a chained verb keeps running after a `failOnDrift` error. In PowerShell, wrap arguments that contain a period in quotes. The `-configFiles` file here is optional: it loads in addition to the project's `flyway.toml` and is one way to give the check steps the read-only account. One shared `flyway.toml` holding every environment's `${env.X}` references also works, because Flyway resolves only the selected environment's variables (file 10).
+
+During:
+7. The reviewer approves the `production` environment in GitHub. One run at a time.
+8. The deploy step runs `migrate`. Redgate's GitHub deploy action checks drift first and saves a snapshot afterward by default, unless `skip-drift-check` or `skip-snapshot` is set (file 12).
+9. If it fails, stop. Don't run `repair`, `undo` or `clean`. Open file 22.
+
+After:
+10. `flyway info -environment=production -outputType=json` shows the expected version. Save it as `info-after.json`.
+11. Smoke tests pass, and monitoring is watched for the agreed window (section 9).
+12. The evidence pack is attached to the run (file 17), and tickets are closed with a link to the run.
+
+## 4. An emergency change in production
+
+Trigger: production is broken and waiting for the normal path is worse than the risk of a faster one.
+
+The question to keep in front of everyone: how do we bring the fix back so the next deploy doesn't undo it?
+
+Preferred path, a hotfix branch and the fast-track pipeline:
+1. Open an incident ticket. Branch from the tag of what is running in production, named `hotfix/<ticket-key>-<short-description>`.
+2. Write one migration with the ticket key in its name. Check your `outOfOrder` setting first: the engine default is `false`, and projects created by Desktop or `flyway init` write `true`. With `false`, the hotfix version must be higher than the highest version in production (file 09).
+3. Open a pull request. One code owner approves, and it's never the author. The checks still run.
+4. Deploy through the `production` environment gate with the on-call approver. Skipping the dry run is the one thing the fast track must not do.
+5. Merge the branch into main the same day. If you don't, the next release from main lacks this migration. Production's history then holds a version with no matching file, and validation fails (states Missing or Future on Redgate's schema history table page).
+
+Break-glass path, a change made directly in production:
+1. Same day: record the incident ticket, who made the change, when and why. Keep the exact SQL that ran.
+2. Run `flyway check -drift` against `production` with the read-only account. The report lists the changed objects. Resolution scripts are generated by default (file 14).
+3. Decide with the team: incorporate (usual after an incident) or revert in a reviewed migration.
+4. To incorporate, make the same change in a `development` database, capture it, and generate a versioned migration named with the ticket key. Write it so it does nothing where the change already exists:
+
+> Not from Redgate docs — starting point, validate in your environment.
+
+```sql
+-- V<version>__<ticket-key>_add_index_orders_status.sql
+IF NOT EXISTS (SELECT 1 FROM sys.indexes
+               WHERE name = N'IX_Orders_Status' AND object_id = OBJECT_ID(N'dbo.Orders'))
+    CREATE INDEX IX_Orders_Status ON dbo.Orders (Status);
+```
+
+5. Promote through `test` and `uat`. On production it runs as a no-op and records a history row.
+6. The alternative is recording it without running it. Redgate's `skipExecutingMigrations` page describes this use, combined with `cherryPick`. Run `flyway info` first and confirm the hotfix is the migration you mean to record. Never let it mark other pending migrations as applied. A person runs this, never an automated job.
+7. After the deploy, the new snapshot makes the next drift check clean. Link the pull request to the incident. If you use Flyway Insights (file 18), select Mark as resolved on the drift alert.
+8. Review afterward: why was direct access needed, and was it closed? Record the decision in your decision log (file 01).
+
+## 5. Refreshing a test or UAT environment
+
+Restore a production-like copy under your approved process. How that copy is produced, masked or trimmed is outside Flyway (files 16 and 24).
+
+1. Restore the copy to `test` or `uat`. It carries production's schema history table and, if snapshots were saved after deploys, its snapshot history.
+2. `flyway info -environment=uat` shows production's version, and lists as pending what has merged since the last production release.
+3. `flyway migrate` brings the copy up to the current branch.
+4. Verify: `flyway info` and `flyway validate` are clean, and a drift check is clean.
+5. Never run `clean` on a restored copy to "start fresh". `cleanDisabled` stays true on shared environments.
+6. If `info` shows Missing or Future, the copy is ahead of your branch. Stop and use file 22.
+
+## 6. "What changed on UAT since Tuesday?"
+
+Four sources. Use the first two for what Flyway deployed, the last two for what it didn't.
+
+1. `flyway info -environment=uat -infoSinceDate="dd/MM/yyyy HH:mm"` lists migrations applied after that date, plus any pending ones. Redgate's Info page requires exactly that format, for example `"01/12/2020 13:00"`, and offers `-infoUntilDate` in the same format to close the window. To narrow by version or state instead, `info` also takes `-infoSinceVersion`, `-infoUntilVersion` and `-infoOfState`. Add `-outputType=json` to get, per migration, `version`, `description`, `type`, `state`, `installedOnUTC`, `installedBy`, `executionTime` and `filepath`.
+2. The schema history table, read directly with the read-only account. Redgate's pages don't list its columns, so the names below are the ones Flyway creates; check them against your own table first. The table name (`table` setting) and its schema (`defaultSchema`) are configurable:
+
+> Not from Redgate docs — starting point, validate in your environment.
+
+```sql
+SELECT installed_rank, version, description, type, script, checksum,
+       installed_by, installed_on, execution_time, success
+FROM <schema>.flyway_schema_history
+WHERE installed_on >= '<since-date>'
+ORDER BY installed_rank;
+```
+
+`installed_on` is the database's own timestamp, so check its time zone on each server, while `installedOnUTC` in the JSON output is UTC. Say which one you quote. A row with `success = 0` is a failed migration: stop and use file 22.
+
+3. Snapshots. Compare two saved snapshots: `flyway check -changes "-check.deployedSnapshot=<before>.json" "-check.nextSnapshot=<after>.json"`. Redgate's snapshot page documents `flyway snapshot` with `-snapshot.source` and `-snapshot.filename` to save one.
+4. Drift. `flyway check -drift` shows changes made outside Flyway, the usual answer to "nothing was deployed".
+
+Also open the deploy workflow's run history in GitHub, filtered to that environment, and match each run to its tickets. The history table has no author or ticket column. Authorship and reason come from Git and the pull request.
+
+## 7. Start-my-day routines
+
+DBA or DevOps engineer:
+1. Overnight scheduled drift-check runs in GitHub Actions. A drift finding needs a decision today: incorporate, revert or filter (file 14).
+2. Failed runs since yesterday. Read the first error line and classify it with file 22.
+3. Pending approvals on the `uat` and `production` environments.
+4. Pull requests waiting for a code owner review, and pull requests blocked by a failed check.
+5. Refresh requests, and any open emergency change that isn't reconciled yet (section 4).
+6. If you use Flyway Insights (file 18, preview), scan for Deploy Failed and Drift Detected.
+7. One line per finding in your team log, with the ticket key.
+
+Developer:
+1. Pull main and rebase your branch.
+2. Check your version number against other open pull requests (file 09).
+3. Open or update your pull request with the ticket key in the branch, title and migration name (file 17).
+4. Fix `check -code` findings, and read reviewer comments before pushing again.
+5. Rebuild your own `development` database from source if main moved (file 16).
+
+## 8. The permissions model
+
+| Account or role | Rights | Used for |
+|---|---|---|
+| Admin | Manages GitHub settings, runners and environments. No routine DDL | Configuration, access reviews |
+| Deploy (migration owner) | The DDL rights your migrations need, plus write access to the schema history and snapshot history tables (prove the exact grants in the POC) | The `migrate` step only. Stored as a GitHub environment secret, readable only by a job that passed the environment's approval |
+| Read-only check | Read access to object metadata and the history tables (confirm with your DBA) | Drift checks, dry runs, `info` |
+| Developer | Full rights on their own `development` database. No write access to `test`, `uat` or `production` | Authoring. Changes reach shared environments only through the pipeline |
+
+Redgate's production-connection guidance says production credentials should only be available to the deployment pipeline, and to use a separate read-only credential for drift checks. Enforcement:
+
+- Branch protection on main and required reviewers on the environments (file 17).
+- No standing production access for developers, including contractors and the integrated business's teams.
+- A break-glass account that is disabled by default, enabled with a ticket, and reviewed afterward. Your security team owns it.
+- Redgate's connections identify as `Redgate_Flyway` from engine 13.8.0. Update any audit rule or monitoring filter keyed on an older name, and use the name to tell pipeline sessions from people.
+- The deploy account, not a person, appears as `installed_by` in the history table.
+
+For Azure SQL sign-in with Microsoft Entra ID, see file 10.
+
+## 9. Monitoring after a deploy
+
+Flyway tells you what changed. It doesn't see query plans, waits or load.
+
+- Agree a watch window per release and name who watches.
+- If you use Redgate Monitor, each deployment can be marked on its activity graph, so a regression lines up with a release. Redgate's "Integrate with Redgate Monitor" page documents two routes: an `afterMigrateApplied.sql` callback that writes an event to the SQL Server error log, and the Monitor PowerShell cmdlet `Add-RedgateMonitorAnnotation`. The callback writes nothing unless the deploy account has EXECUTE on `sys.xp_logevent`. File 19 has the script and both routes.
+- If something regresses, start section 6 with the time the regression began.
+
+## 10. Handover and on-call notes
+
+A handover note, at shift change or before leave:
+
+> Not from Redgate docs — starting point, validate in your environment.
+
+```text
+Last production release: <tag>, <date>, run <link>
+Pending approvals: <environment>, <ticket-key>
+Open drift decisions: <environment>, <ticket-key>
+Emergency changes not yet reconciled: <ticket-key>
+Failing scheduled runs: <workflow>, since <date>
+Expiring soon: <token or secret>, <date>
+Refreshes in progress: <environment>
+```
+
+On-call: a named team of at least two people can approve `production`. The break-glass procedure and its owner are written in your decision log (file 01) or your runbook. When someone leaves or a contractor's engagement ends, remove them from the GitHub teams that review and approve, and rotate any secret they could read.
+
+## 11. In daily use
+
+People ask:
+- "Who has to review this migration?" Section 2: the code owners for that path.
+- "Can we ship this hotfix today?" Section 4, preferred path first.
+- "Someone changed production by hand." Section 4, break-glass path.
+- "What changed on UAT since Tuesday?" Section 6.
+- "Refresh UAT from production." Section 5, then file 16.
+- "Start my day." Section 7.
+
+## 12. Limits
+
+- Flyway doesn't see query performance. Use your monitoring tool.
+- Flyway has no built-in "deploy to many" command. Fan-out is the pipeline's job (file 11).
+- The schema history table can be edited by anyone with write access and records nothing done outside Flyway. Pair it with drift checks.
+- Flyway doesn't produce, mask or trim the data in a refreshed copy.
+- GitHub's approval gates are the control. Flyway has no role-based access feature.
+
+## 13. Instructions for the AI assistant using this file
+
+- When a trigger phrase appears, name the section, ask which environment, then go one step at a time.
+- Ask for the ticket key at the start of sections 3 and 4, and use it in every name you suggest.
+- Never suggest `repair`, `clean`, `undo` or `skipExecutingMigrations` on a real target without the checks in files 14 and 22.
+- Never propose that one person authors and approves the same production change.
+- Never ask for rows, query results or comparison output. Work from object names, filenames and report summaries.
+- Label Flyway Insights as preview whenever it appears.
+- Retention, on-call rules and access policy are the team's decisions. Ask, don't assume.

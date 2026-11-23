@@ -1,0 +1,299 @@
+Flyway Enterprise AI library - file 07 of 32
+MOVING OFF A SCRIPT RUNNER - BASELINING EXISTING SQL SERVER DATABASES AND RUNNING SIDE BY SIDE
+Flyway reference library, October 2026. Generic guidance written for your AI assistant. It contains no data from your environment, and you shouldn't add any to these files.
+
+What this covers: Moving databases that an in-house script runner manages onto Flyway without a big-bang cut-over: inventory, choosing a baseline point, capturing the schema, aligning environments, baselining each environment's history, reference data, side-by-side rules, cut-over and retirement, converting legacy packages, cross-database references and several databases. It's written for SQL Server on-premises and Azure SQL.
+
+Not in this file: SQL projects compared with Flyway (file 06), moving off SQL Change Automation or SQL Source Control (file 31), the proof of concept plan (file 05), daily authoring (file 08), version numbering across teams (file 09), release ordering across databases (file 11), drift and undo (file 14), and building development and test databases (file 16).
+
+Contents:
+1. What the runner knows: take inventory first
+2. How baselines work
+3. Choose the baseline point
+4. Capture the schema model and the baseline migration
+5. Align the environments before you baseline
+6. Baseline each environment's history
+7. Reference and static data at baseline
+8. Running side by side: freeze rules and unavoidable changes
+9. Cut-over checklist and retiring the runner
+10. Converting legacy packages into migrations
+11. Cross-database references and linked servers
+12. Several databases
+13. Limits
+14. Instructions for the AI assistant using this file
+
+## 1. What the runner knows: take inventory first
+
+Record the following per database and environment in your decision log (file 01) or your own runbook, never in this file:
+
+- Where the runner records applied scripts: the table, its columns (script name, ticket key, date, applied by, checksum) and the account that writes to it.
+- How scripts are ordered (name, number, date or manifest) and what a "package" is (one script, a folder, a zip with pre- and post-steps).
+- What else the runner does: approvals, notifications, backups, permission changes.
+- Which environments are in step. The usual surprise is that test is two packages ahead of production, or a hotfix reached production only.
+- Objects outside the scripts (hand-made objects, other teams' tools, jobs, linked servers) and tables whose reference data the scripts maintain.
+- Who owns the runner, who can freeze it, and the audit trail your auditors rely on (file 17).
+
+Keep the runner's history table. You'll compare it with Flyway's records during the side-by-side period and archive it when the runner retires.
+
+## 2. How baselines work
+
+Flyway records applied migrations in a schema history table (`flyway_schema_history` by default). A baseline says "everything up to this version is already here." Two separate mechanisms exist, and mixing them up causes most baselining mistakes.
+
+| Mechanism | Applies to | What it does |
+|---|---|---|
+| `B` migration (for example `B001__baseline.sql`) | New or empty environments only | Flyway runs the latest `B` script as the starting point and marks lower versions ignored. |
+| `flyway baseline` | Existing, populated databases | Writes a baseline row at `baselineVersion`, so migrations up to and including it are excluded. It runs no SQL against your objects. |
+
+- They're independent. A `B` script doesn't baseline a populated database, and the command doesn't read the `B` script's version.
+- Pass `baselineVersion` as the `B` script's full version, timestamp included. A generated `B001_20261019143000__Baseline.sql` is version `001.20261019143000`, as `flyway info` shows it. A mismatch makes `flyway check` fail with "No matching migrations found".
+- Repeatable migrations run normally in both cases.
+- `baselineOnMigrate` is a third thing: when true, `flyway migrate` baselines a non-empty database that has no history table, instead of stopping with `NON_EMPTY_SCHEMA_WITHOUT_SCHEMA_HISTORY_TABLE`. That stop is your protection against migrating an unrecognized database. Keep it false on every shared environment.
+
+Documentation:
+
+- Baselines: https://documentation.red-gate.com/flyway/flyway-concepts/baselines
+- Baseline command: https://documentation.red-gate.com/flyway/reference/commands/baseline
+- Baseline migrations: https://documentation.red-gate.com/flyway/flyway-concepts/migrations/baseline-migrations
+- Downstream environments: https://documentation.red-gate.com/flyway/deploying-database-changes-using-flyway/baselining-your-downstream-environments
+
+## 3. Choose the baseline point
+
+The baseline point is where Flyway's history starts. Everything before it stays with the runner.
+
+1. Choose a state that exists in production: production today, or production after the last runner package.
+2. Choose a point every environment you'll bring over can reach. If environments differ, align them first (section 5) or plan several baselines (Redgate's baselines page covers this).
+3. Use a version lower than any future migration (generation starts at `001`), and a description naming the runner package or date.
+4. Record the runner's last package and the date in your decision log (file 01).
+
+Don't replay years of runner scripts as migrations. That history is usually inconsistent (scripts edited after they ran, steps done by hand), and replaying it often builds a different schema than production.
+
+A baseline script built from a schema can struggle with invalid objects, filegroups, cross-database dependencies and very large databases. For those, provision new environments from a backup (file 16) and baseline them with the command.
+
+## 4. Capture the schema model and the baseline migration
+
+1. Take the baseline from a database you trust, ideally a restored copy of production in non-production (file 16). Azure SQL Database doesn't restore native `.bak` files: use a database copy (`CREATE DATABASE ... AS COPY OF`) or point-in-time restore. Managed Instance restores `.bak` files from Azure Blob Storage only (`RESTORE ... FROM URL`).
+2. In Flyway Desktop, create the project, connect that database as `development` and save it to the schema model (file 08).
+3. If you want new environments built from scripts, generate a baseline migration. Redgate's tutorial requires a project with no migrations yet.
+   - Flyway Desktop (needs a shadow environment, file 16): on the Generate Migrations tab choose the baseline database and click Generate baseline script. Desktop filters users and roles automatically, lists invalid objects so you can deselect false positives, and offers Verify Script against the shadow database.
+   - Command line: Redgate's baseline tutorial diffs the baseline database against `migrations` built on the shadow, then runs `generate` with the baseline type. Redgate's command-line setup guide also diffs against `empty`, which needs no shadow. `baseline` can't be combined with `versioned` or `undo` in one call. `generate` also accepts `-baselineFilename`; check Redgate's generate command page for its format before you use it.
+
+> Not from Redgate docs — starting point, validate in your environment.
+
+```bash
+flyway diff -diff.source=<baseline-environment> -diff.target=migrations -diff.buildEnvironment=shadow
+# or, with no shadow: flyway diff -diff.source=<baseline-environment> -diff.target=empty
+flyway generate -generate.types=baseline -generate.description=Baseline
+```
+
+4. Review the `B` script. Remove production-only usernames and permissions, and handle objects that depend on other databases, filegroups other environments lack, and the runner's own tables. Exclude them with the SQL Server comparison filter (`Filter.scpf`, edited in Desktop's filter editor) or as in section 11.
+5. Run `diff` again. Redgate's tutorial shows "No differences found" once the shadow database is built from the new baseline. Then run `flyway migrate` on an empty SQL Server database to confirm it builds.
+6. Commit the schema model and `B` script in one reviewed pull request (file 13).
+
+If you don't need script-built environments, skip the `B` script and baseline existing databases with the command. Redgate also documents baselining from a SQL Server backup: https://documentation.red-gate.com/flyway/learn-more-about-flyway/how-to-articles/use-a-sql-server-backup-to-baseline-a-database
+
+Backup as Baseline (Enterprise, SQL Server), as Redgate's page describes it. It remains the preferred route in this library and the sandbox repo, because it avoids the problems of a generated baseline script (invalid objects, linked servers, filegroups, size). It works through the shadow environment's `backup` provisioner (preview), not through a `B` script. The backup provisioner is labelled preview on its reference page (file 25), so say "(preview)" whenever you describe it:
+
+1. Make a schema-only copy with `DBCC CLONEDATABASE(<db>, <db>_Copy) WITH VERIFY_CLONEDB;`, back it up with `BACKUP DATABASE [<db>_Copy] TO DISK = N'<file>.bak' WITH FORMAT;`, then drop the copy. The page also covers optional steps: keeping `flyway_schema_history`, copying static data, and shrinking the files.
+2. Make the file readable by the SQL Server instance that restores it. The shadow login needs permission to restore.
+3. Configure the shadow environment in `flyway.toml`:
+
+> Not from Redgate docs — starting point, validate in your environment.
+```toml
+[environments.shadow]
+url = "jdbc:sqlserver://<server>;databaseName=<shadow-db>;encrypt=optional;integratedSecurity=true;trustServerCertificate=true"
+provisioner = "backup"
+
+  [environments.shadow.resolvers.backup]
+  backupFilePath = "<file>.bak"
+  backupVersion = "001"
+  sqlserver.generateWithMove = true
+```
+
+The keys come from Redgate's page. `backupVersion` is required when the backup has no `flyway_schema_history` table; `001` suits a new project. `generateWithMove` makes the provisioner choose data and log paths on the target instance, which avoids restore failures from paths baked into the backup. `flyway info -environment=shadow` then restores it and shows a baseline row (type BASELINE, "Baseline from backup"); the restore doesn't repeat until the shadow is cleaned. In Desktop: Generate migrations, Set up shadow database, Backup.
+
+If you'd rather name the restore paths yourself, the backup provisioner (preview) also takes an explicit file mapping, listed in Redgate's reference as the alternative to `sqlserver.generateWithMove`: one `[[environments.<env>.resolvers.backup.sqlserver.files]]` entry per database file, each with `logicalName` and `filePath`. Check Redgate's backup provisioner page for how the two settings combine before you use it.
+
+> Not from Redgate docs — starting point, validate in your environment.
+```toml
+  [[environments.shadow.resolvers.backup.sqlserver.files]]
+  logicalName = "<data-file-logical-name>"
+  filePath = "<server-data-folder>/<shadow-db>.mdf"
+
+  [[environments.shadow.resolvers.backup.sqlserver.files]]
+  logicalName = "<log-file-logical-name>"
+  filePath = "<server-log-folder>/<shadow-db>_log.ldf"
+```
+
+Limits: it needs an Enterprise licence. `DBCC CLONEDATABASE` doesn't fully handle system-versioned temporal tables, ledger tables and some system-level objects, which you script in an `afterBaseline` callback. It restores a native `.bak`, so it doesn't suit Azure SQL Database and may not suit some Azure SQL Managed Instance setups: use a baseline script there. The how-to page doesn't state version floors or preview status, but the backup provisioner it relies on is (preview) on its reference page. Check file 25 for both before relying on either.
+
+## 5. Align the environments before you baseline
+
+Redgate's baselines page says downstream environments should be in step with the baseline, or you reset them or use more than one baseline. Flyway doesn't reconcile differences when you baseline. It records the version you pass whether the database matches or not.
+
+1. Compare the baseline database with each other environment, read-only. SQL Compare and `flyway diff` both work.
+2. Sort differences into expected (the runner's own tables), reconcilable (a package that reached one environment and not another) and unknown (a hand-made change).
+3. Close the gap by finishing the missing runner packages, or by refreshing the lower environment from the baseline source (file 16). Don't hand-edit objects to turn a comparison green.
+4. Re-run the comparison and keep the output as evidence.
+
+Go lower environments first, as rehearsal for production.
+
+## 6. Baseline each environment's history
+
+Baselining production is a recorded change. Use the same steps in the same order in every environment, with the deploy account (file 04).
+
+> Not from Redgate docs — starting point, validate in your environment.
+
+```bash
+flyway info -environment=uat
+flyway baseline -environment=uat -baselineVersion=<B-script-version> -baselineDescription="Baseline from script runner, last package <ticket-key>"
+flyway info -environment=uat
+flyway validate -environment=uat
+flyway migrate -environment=uat
+```
+
+- `info` before confirms there's no Flyway history. If unexpected rows exist, stop.
+- `baseline` writes the baseline row, creating the history table if needed.
+- `info` after and `validate` confirm the history and the project's migrations agree.
+- `migrate` applies anything newer than the baseline, usually only repeatable migrations at first.
+
+Rules:
+
+- Never run `repair` to make a baseline look right. Repair rewrites history and is a person's decision after reading the output, never a pipeline step.
+- Never use `clean` on an environment that matters. It's for build, shadow and scratch databases.
+- If `baseline` fails on a database that already has history rows, don't delete them. Take the error to the environment's owner.
+- Keep `baselineOnMigrate` false in these environments' configuration.
+- Save the `info` output before and after, with date and person, as evidence (file 17).
+
+## 7. Reference and static data at baseline
+
+A baseline built from a schema contains objects, not the rows the runner's scripts maintained. Decide per table: rows the application needs (lookup codes, statuses) are tracked in Flyway, and environment-specific or customer rows stay out of source control.
+
+Flyway Desktop has Manage Static Data on the Schema model tab. In configuration it's `[[redgateCompare.staticDataTables]]` with `schema`, `table`, `excludedColumns` and `whereClause`. Each table needs a primary key, and `whereClause` (SQL Server only) filters rows on live databases, not the schema model. Generated migrations then contain INSERT, UPDATE and DELETE statements, and undo scripts include the data changes.
+
+Alternatives are a repeatable migration (`R__` prefix) that merges the rows when its checksum changes, a script migration, or Data Compare. After baselining, compare each tracked table with what a fresh build produces. Never put personal data in a baseline or static data table. File 16 covers reference data in development and test.
+
+## 8. Running side by side: freeze rules and unavoidable changes
+
+Both tools must never change the same database independently. Agree these rules first:
+
+1. One tool owns each environment at a time. Write the owner per environment in your decision log (file 01).
+2. Once an environment is baselined, disable the runner's job for it. Don't rely on people remembering.
+3. Author new changes as Flyway migrations only. Never author the same change in both tools.
+4. Until production cuts over, a change that must go through the runner is an exception. Keep an exception list and review it weekly.
+5. Run `flyway info` and `flyway validate`, plus the drift check (file 14), in the pipeline for every baselined environment, so an outside change fails a check instead of surprising you.
+
+If a change is unavoidable through the runner (a production incident, for example):
+
+1. Make it under your emergency rules (file 15) and record who approved it.
+2. Capture it afterward as a Flyway migration in source control with the ticket key.
+3. In the environment that already has it, mark it applied with `skipExecutingMigrations`, which records migrations without running them and works with `cherryPick` (a setting, not a command). With `target`, it marks every pending migration up to that version, so run `flyway info` first and confirm the hotfix is the only one pending.
+4. Let the migration run normally everywhere else.
+5. Don't use `repair`, and don't insert rows into the history table by hand.
+
+> Not from Redgate docs — starting point, validate in your environment.
+
+```bash
+flyway info -environment=production
+flyway migrate -environment=production -skipExecutingMigrations=true -target=<version>
+flyway info -environment=production
+```
+
+A person authorized for production changes runs this, and the before and after output goes to the evidence record (file 17).
+
+## 9. Cut-over checklist and retiring the runner
+
+Per environment, lower to higher:
+
+- [ ] Inventory done and the runner's history table archived (section 1).
+- [ ] Baseline point recorded in the decision log (file 01).
+- [ ] Schema model and baseline migration merged, build check passing (section 4).
+- [ ] Environment compared and aligned (section 5).
+- [ ] `info`, `baseline`, `info`, `validate`, `migrate` run and saved (section 6).
+- [ ] Runner's job for this environment disabled.
+- [ ] Pipeline runs `migrate` with the deploy account. The read-only check account runs `info` and the drift check.
+- [ ] One real change has gone through the Flyway pipeline end to end.
+
+For production, add:
+
+- [ ] Approvers agreed (file 17).
+- [ ] Timed rehearsal on a restored copy of production (file 16).
+- [ ] Rollback path agreed, including for the baseline step (files 11 and 14).
+- [ ] Cut-over window and freeze announced to every runner user.
+
+Retiring the runner: keep it read-only as long as your retention policy requires, and don't delete its history. Remove its credentials, scheduled jobs and pipeline steps. Update the runbooks (file 15) and onboarding notes. Close the exception list. Record the retirement date and archive location in your decision log (file 01).
+
+## 10. Converting legacy packages into migrations
+
+Convert the way you write new changes, plus any unreleased backlog. Nothing older than the baseline.
+
+- One ticket, one migration, when the change is one unit of work. Unrelated steps in a ticket become separate migrations.
+- Name them `V<version>__<ticket-key>_<short-description>.sql`, using one version scheme for everyone (file 09). Never edit an applied migration. Flyway validates checksums and an edited file fails.
+- Split DDL from DML. A migration that alters a table and updates millions of rows holds locks longer and is harder to recover. Put structure in one migration and data motion in the next.
+- Be deliberate about idempotency. Runners often wrap every statement in an existence check because scripts could run twice. A versioned migration runs once per database, so keep a guard only where the object may already exist somewhere (for example after an unavoidable change, section 8). Repeatable migrations must be safe to re-run, so use `CREATE OR ALTER` (SQL Server 2016 SP1 and later, and Azure SQL) or an equivalent.
+- Strip runner-specific parts: logging calls, macros, history inserts, environment switches. Use placeholders for environment differences (section 11).
+- Convert "run after every deploy" scripts to repeatable migrations.
+- Note in the file header any statement that can't run in a transaction, so reviewers know a failure may leave partial changes.
+- Server-level objects the runner deploys today (SQL Server Agent jobs, logins, server roles, linked servers, `sp_configure` settings) sit outside the database comparison, so Desktop won't capture them, `generate` won't script them and drift checks won't see them. Either keep them as hand-written, re-runnable migrations guarded with existence checks, which Flyway deploys like any other migration, or hand them to the DBA team's infrastructure process. Record the choice per object type in your decision log (file 01). Credentials never go in either.
+
+## 11. Cross-database references and linked servers
+
+Objects that reference `[OtherDb].dbo.Table` or a linked server break empty builds and comparisons when the related database is named differently or missing.
+
+- Filters. If a cross-database object can't exist where you compare or build, exclude it from the schema model comparison with a filter rule, and deploy it by repeatable or script migration where the dependency exists.
+- Placeholders. Put the part that changes per environment in a placeholder:
+
+> Not from Redgate docs — starting point, validate in your environment.
+
+```toml
+[environments.test]
+url = "jdbc:sqlserver://<server>;databaseName=<db-name>;encrypt=true"
+flyway.placeholders.LinkedServer = "<linked-server-name>"
+flyway.placeholders.ReportingDb = "<reporting-db-name>"
+```
+
+> Not from Redgate docs — starting point, validate in your environment.
+
+```sql
+CREATE OR ALTER VIEW dbo.vw_OrderSummary AS
+SELECT o.OrderId, r.Region
+FROM dbo.Orders AS o
+JOIN [${ReportingDb}].dbo.Regions AS r ON r.RegionId = o.RegionId;
+```
+
+Global placeholders go under `[flyway.placeholders]`. Built-ins include `${flyway:defaultSchema}` and `${flyway:user}`. Preview the result with `flyway check -dryrun`.
+
+- Placeholders work in versioned and repeatable migrations and SQL callbacks, not in state-based deployment scripts (file 06).
+- `-generate.usePlaceholders=true` asks `generate` to swap configured placeholder values for `${name}` tokens. It's a plain-text match, so use distinctive values in development and review the output.
+- Never use placeholders for secrets. Use your secret store and environment variables such as `${env.FLYWAY_UAT_URL}` (file 04).
+
+Decide whether a linked server definition is a migration or an infrastructure step owned by the DBA team. Its credentials never go in a migration.
+
+## 12. Several databases
+
+Use one Flyway project per database, each with its own schema model, migrations, history table and baseline. That keeps a baseline, a failed migration or a rollback scoped to one database.
+
+- Repeat sections 3 to 6 per database. Baseline versions needn't match.
+- Write cross-database dependencies in the decision log (file 01) and in the pull request.
+- Release order belongs in the pipeline, not in version numbers (file 11).
+- Apply the freeze rules per database. A baselined database is no longer deployed by the runner, even if its neighbors still are.
+
+## 13. Limits
+
+- Flyway doesn't import the runner's history table. Your inventory and the archived table are the record before the baseline.
+- `baseline` marks a database. It doesn't check that the database matches. Section 5 is how you check.
+- Flyway Desktop has no re-baselining screen. Re-baseline from the command line with a new `B` script, or by archiving and resetting the history (rename the history table and its primary key).
+- Placeholders don't work in state-based deployment scripts.
+- `generate` is a Flyway Enterprise command.
+- Conversion of runner packages is manual.
+
+## 14. Instructions for the AI assistant using this file
+
+- Read the repository and the decision log first (file 01) for which environments are baselined and who owns each. If nothing is recorded, ask for the section 1 inventory before suggesting commands.
+- Never suggest `repair`, `clean` or `baselineOnMigrate=true` on a shared environment. For a history mismatch, ask what `flyway info` shows and send the person to whoever owns that environment.
+- Before any baseline command, ask the person to run `flyway info` for that environment and share the output, with no table data.
+- Check that `baselineVersion` matches the `B` script's full version, timestamp included.
+- For a change made outside Flyway, point to section 8. Don't suggest editing the history table.
+- Don't recommend replaying the runner's old scripts as migrations.
+- Use the deploy account and the read-only check account in pipeline examples, never admin.
+- Mark any code you add that isn't in this file with the not-from-Redgate-docs line.
+- Answer in the language the person writes in. Keep commands, keys, file names and error text in English.

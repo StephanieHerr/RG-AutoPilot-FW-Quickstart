@@ -1,0 +1,202 @@
+Flyway Enterprise AI library - file 01 of 32
+How the assistant works out your setup - discovery, defaults and decision log
+Flyway reference library, October 2026. Generic guidance written for your AI assistant. It contains no data from your environment, and you shouldn't add any to these files.
+
+What this covers: How your AI assistant learns how your team works without anyone filling in a form. It reads your repository first, tells a freshly created Flyway project apart from one already in use, infers only what the files prove, uses a stated set of safe defaults until told otherwise, and asks one question at a time, only when the answer changes the advice. It also describes an optional decision log the team can let the assistant append to.
+
+Not in this file: How to read and change `flyway.toml` in detail, including the full fresh-project checklist (`10 - project configuration - flyway.toml, environments, filters, shadow databases and secrets.txt`). Designing a workflow for each team (`28 - workflow architect - designing dev to PR to operations to pipeline for each team.txt`). Matching your estate to a scenario (`29 - scenario playbooks - greenfield, brownfield, monolith, many databases and microservices.txt`). Modes and guided tracks (file 27).
+
+Contents:
+1. How this file works
+2. What the assistant reads first
+3. Fresh project or configured project
+4. What the assistant may infer, and what it must not
+5. Safe defaults until told otherwise
+6. What the assistant asks, and how
+7. The optional decision log
+8. In daily use
+9. Limits
+10. Instructions for the AI assistant using this file
+
+## 1. How this file works
+
+Nobody edits this file. Like every other file in the library, it's replaced when a newer library arrives.
+
+Instead of a profile you fill in, the assistant works out your setup from three sources, in this order:
+
+1. Your repository: the files Flyway, Git and GitHub Actions leave behind (section 2).
+2. Your team's decision log, if you keep one (section 7).
+3. You: one short question when something the files can't show changes the answer (section 6).
+
+Until one of those says otherwise, it uses the safe defaults in section 5 and says so when a default shapes an answer. It never assumes your team has done work the files don't show.
+
+"No data from your environment" still applies. The assistant refers to servers, databases and people by role ("the shared database", "the production Azure SQL database", "the in-house script runner") and uses placeholders such as `<server>` and `<db-name>` in anything it writes.
+
+## 2. What the assistant reads first
+
+When a conversation starts in a repository, or someone attaches files, the assistant looks for these before asking anything. Each line says what the file tells it.
+
+| Look for | What it shows |
+| --- | --- |
+| `flyway.toml` (one or several) | That a Flyway project exists, how many projects the repository holds, the database type, environment names, `outOfOrder`, `validateMigrationNaming`, `cleanDisabled`, the schema model location and any `publishResult` setting (files 10 and 18) |
+| `flyway.user.toml` | Per-developer connections, usually the `development` and `shadow` environments. If it's committed rather than git-ignored, flag it (file 10) |
+| `.gitignore` | Whether `flyway.user.toml` and report output are kept out of Git |
+| `migrations/` | Empty, or holding versioned (`V`), undo (`U`), baseline (`B`) and repeatable (`R`) scripts; the naming pattern shows timestamped versions or plain increments (file 09) |
+| `schema-model/` | Empty, or one file per object; folders per schema hint at schema ownership (file 09) |
+| `.github/workflows/*.yml` | Whether a pull request check or deployment exists, which runner labels it uses, which environments it names, and whether it uses `red-gate/setup-flyway` or `red-gate/flyway-actions` (file 12) |
+| `ci/*.toml` | Optional per-environment pipeline config, loaded with `-configFiles` on top of `flyway.toml`; absent when every environment lives in `flyway.toml` (files 10 and 12) |
+| `CODEOWNERS` | Who reviews which schema folders or migration paths (file 09) |
+| Branch names and recent commit messages | The branching style, and whether ticket keys are already used and in what format (file 30) |
+| `README` and any `docs/` notes | The team's own description of the repository and its process |
+| `.vscode/tasks.json`, `.vscode/mcp.json`, `.mcp.json` | Whether developers run Flyway from VS Code tasks, and whether the Flyway MCP server (preview) is registered (files 08 and 20) |
+| `*.sqlproj`, publish profiles, `.dacpac` references | A SQL projects (SSDT) team (`06 - moving off SSDT and DACPAC deployments - paths, steps and what you gain.txt`) |
+| Folders of numbered SQL scripts with no Flyway config, or a legacy `flyway.conf` | A script-runner or older Flyway setup (file 07; file 10 covers converting `.conf`) |
+| The decision log, if the team keeps one | Decisions already made (section 7) |
+
+If the assistant can't see the repository (a chat tool with attached files only), it says so and asks for the two or three files that matter for the question, usually `flyway.toml` and the workflow file, with secrets and server names removed.
+
+## 3. Fresh project or configured project
+
+A `flyway.toml` doesn't mean a team is up and running. `flyway init` and Flyway Desktop both write one the moment a project is created. The assistant checks which situation it's in before giving advice. File 10 holds the detailed checklist; these are the signals.
+
+| Signal | Fresh project | Configured, in use |
+| --- | --- | --- |
+| `flyway.toml` | Root keys (`id`, `name`, `databaseType`) and the settings the tool wrote, little else | Environments the team added, filters, edited settings |
+| Environments | None, or names without real connection details | `development`, `shadow`, `build` and deployment targets with `${env.X}` or resolver references |
+| `migrations/` | Empty | Versioned scripts, possibly a baseline script |
+| `schema-model/` | Empty or missing | One file per object |
+| Workflows | None, or a sample nobody has run | A pull request check and deployment jobs |
+| Git history | One or two commits | Many commits from several authors |
+
+Some settings in a fresh file are tool-written values, not team decisions. Projects created by `flyway init` or Desktop write `outOfOrder = true` and `mixed = true`, although the engine defaults are `false` (file 10). The assistant treats those as "not yet decided" in a fresh project and as "decided" in a configured one, and in both cases tells the team to read their own file.
+
+In a fresh project, the assistant offers the fast start (file 27, track S) or design mode (files 27 and 28) and doesn't assume baselines, environments, runners or approvals exist. In a configured project, it reads what's there, works with it, and raises anything that breaks a house rule (for example `cleanDisabled = false` on a shared environment, or credentials in a committed file).
+
+Mixed repositories are common: one configured project and one fresh one, or a configured project with an empty `ci/` folder. The assistant judges each project and each area separately.
+
+## 4. What the assistant may infer, and what it must not
+
+It may infer what the files prove:
+
+- The number of Flyway projects and which database type each targets.
+- Whether migrations are timestamped, and whether two files already share a version.
+- Whether a pull request check exists, and what it runs.
+- Environment names, and that each `${env.X}` reference needs a matching secret or variable.
+- The branching style from branch names, and the ticket-key format from commits.
+- Whether developers use dedicated databases: `development` lives in `flyway.user.toml` (dedicated is the Desktop default) or in `flyway.toml` (often a shared database).
+
+It must not infer what the repository can't show:
+
+- Approvals. Required reviewers, wait timers and deployment branch rules live in GitHub environment settings, not in the YAML. A workflow that names `environment: production` doesn't prove a reviewer is set (file 12).
+- The GitHub plan. Required reviewers on private repositories need GitHub Enterprise; GitHub Team gets them only on public repositories (file 12). Ask before designing an approval gate that depends on them.
+- Branch protection and required checks, also GitHub settings.
+- That a database is baselined because a baseline script exists. `flyway info` against the database shows it.
+- Network reach. A self-hosted runner label doesn't prove that runner reaches on-premises SQL Server or Azure SQL (file 23).
+- That Flyway Insights (preview) is approved because a setting exists (file 18).
+- Anything about people. Roles come from the person asking or from the decision log.
+
+When an inference shapes the answer, the assistant says what it read: "Your `flyway.toml` sets `outOfOrder = true`, so ...".
+
+## 5. Safe defaults until told otherwise
+
+Until the repository or the decision log says otherwise, the assistant designs to these defaults and names the one it's using. Each is a starting point the team can change; the file in brackets explains the trade-off.
+
+| Area | Default |
+| --- | --- |
+| Approach | Migrations-based, with a schema model committed beside the migrations (file 02; file 06 for SQL projects teams) |
+| Projects | One Flyway project per database (file 29) |
+| Version numbers | Timestamped versions as Desktop generates them; `validateMigrationNaming = true` (file 09) |
+| `outOfOrder` | Read the file; never change it silently; one value on every shared environment of a project; if undecided, offer the strict stance first (file 09, section 5) |
+| Development databases | A dedicated development database and a dedicated shadow per developer, connections in `flyway.user.toml` (file 16) |
+| Authoring | Change the development database, capture to the schema model, generate the migration; hand-write with `flyway add` for data changes and renames (file 08) |
+| Branching | Short-lived branches and a pull request to `main` (file 09) |
+| Pull request check | Required. Build from the migrations on a `build` database, `check -code` report-only first (file 13) |
+| Pipeline config | Every environment in the shared `flyway.toml`, credentials as `${env.X}`; each step selects its target with `-environment`, and Flyway resolves only that environment's variables. A small `ci/<environment>.toml` per environment, loaded with `-configFiles` in addition to `flyway.toml`, is optional, for teams that want to scope secrets per job (file 10) |
+| Release | Build once and promote the same run; `test` after merge; `uat` and `production` behind approval; production on demand, one run at a time, with a dry-run report read before approval (file 11) |
+| Real deployment | Off until a DBA has read a dry-run preview (file 27, track S) |
+| Production recovery | Roll forward; undo only in lower environments where it's been tested (file 14) |
+| Clean | Build, shadow and scratch databases only; `cleanDisabled = true` on shared environments (file 10) |
+| Pipeline sign-in | `FLYWAY_EMAIL` and `FLYWAY_TOKEN` as secrets, or an offline permit where runners can't reach the licensing service (file 04) |
+| Runners | Self-hosted for on-premises SQL Server; GitHub-hosted for Azure SQL only where the network allows (file 12) |
+| Azure authentication | The option the team already uses; otherwise ask, because the choice changes the workflow (file 12) |
+| Flyway Insights (preview) | Off: `publishResult = false`, turned on only for chosen environments after a data-policy decision (file 18) |
+| Flyway MCP server (preview) | Not registered until approved; then the toolset file 20 names (`develop_migrations` in the sandbox setup repo), against development and shadow databases only (file 20) |
+| Ticket keys | Suggested in branch names and pull request titles; enforced only after the team confirms the system and key format (file 30) |
+| Accounts | An admin role, a deploy (migration owner) account, a read-only check account and a developer role (file 04) |
+
+A default never overrides what the repository shows. If `flyway.toml` already sets something different, the assistant works with the team's value and mentions the default only if the team's value breaks a house rule in file 00.
+
+## 6. What the assistant asks, and how
+
+It asks only when the answer changes the advice. Questions that usually do:
+
+- Which project, when the repository holds several and the question doesn't say.
+- Dedicated or shared development databases, when `flyway.user.toml` is absent and the answer changes the pull workflow (file 08).
+- Azure SQL Database, Azure SQL Managed Instance or on-premises SQL Server, when it changes authentication, network reach or the provisioner (files 12 and 16).
+- The GitHub plan (Enterprise Cloud, Enterprise Server or Team), before designing approvals or report uploads (file 12).
+- GitHub-hosted or self-hosted runner, when a step needs to reach a database.
+- The ticketing system and key format, before writing an enforcement check (file 30).
+- The person's role, once, when the answer differs for a developer, a DBA or an approver.
+
+How it asks:
+
+- One question per message, with numbered options and the default marked, so a reply can be "2".
+- It says why it's asking: "This changes whether the workflow needs required reviewers."
+- If the person doesn't know, it proceeds with the default and says what would change later.
+- It never asks for server names, connection strings, passwords, tokens or data.
+
+> Not from Redgate docs — starting point, validate in your environment.
+```text
+One question before I write this: where do developers make changes?
+1. Each developer has their own database (default)
+2. One shared development database
+3. Not decided yet
+Why it matters: it changes how a developer pulls teammates' changes (file 08).
+```
+
+## 7. The optional decision log
+
+A decision log saves re-asking. It's optional; everything in this library works without one.
+
+Keep it outside the library folder, so replacing the library never touches it. A suggested location is `docs/flyway-decisions.md` in the same repository; any path works if you tell the assistant where it is.
+
+If the team allows it, the assistant appends entries itself in tools that can edit files. Otherwise it drafts the entry for a person to paste. It never rewrites or deletes an existing entry; a changed decision is a new line that names the one it replaces.
+
+> Not from Redgate docs — starting point, validate in your environment.
+```markdown
+# Flyway decisions
+
+Newest first. Roles, never names. No servers, connection strings or data.
+
+- YYYY-MM-DD - Decision: <one line> - Why: <one line> - Options considered: <list> - Owner role: <role> - Revisit when: <trigger>
+- YYYY-MM-DD - Environment names: development = <your name>, test = <your name>, uat = <your name>, production = <your name>
+- YYYY-MM-DD - Setup progress: track S done; track F in progress
+```
+
+Entries worth logging: development database model, numbering and `outOfOrder`, where migrations are generated, what is standardized across teams and what each team chooses (file 28), runner choice, Azure authentication route, undo or roll-forward per environment, baseline version, ticket system and key format, Insights data-policy outcome, AI tool and model location, and proof-of-concept criteria and verdict. The log can also hold the mapping from the library's environment names to yours, and setup progress for the guided tracks.
+
+## 8. In daily use
+
+- "What do you know about our setup?" The assistant lists what it read, what it inferred, which defaults it's using, and what it doesn't know.
+- "Is this a fresh project?" It runs the section 3 signals against the repository and answers per project.
+- "Add that to the decision log." It drafts or appends the entry.
+- "Why did you assume that?" It names the file it read or the default from section 5.
+- "We changed our mind about X." It adds a new entry that replaces the old one and says which answers this changes.
+
+## 9. Limits
+
+- The assistant reads files; it can't see GitHub settings, database state or network reach. Approvals, branch protection, baselines and connectivity are checked by a person or a command (`flyway info`, `flyway testConnection`), not by reading.
+- Tools without repository access see only what's attached. Discovery is then as good as the files provided.
+- Defaults are a safe starting point, not a recommendation for every team. File 28 helps a team choose deliberately.
+- The decision log is plain text the team owns; the assistant can't enforce it.
+
+## 10. Instructions for the AI assistant using this file
+
+- At the start of a conversation, read the files in section 2 that you can see, before asking anything. Never claim to have read a file you couldn't open.
+- Decide fresh or configured per project (section 3). In a fresh project, don't assume environments, baselines, runners, approvals or a ticket system exist; offer fast start or design mode.
+- Infer only what section 4 allows. Approvals, branch protection, the GitHub plan, baselines and network reach always need a person or a command.
+- Use the section 5 defaults until the repository or the decision log says otherwise. Name the default when it shapes an answer. Never override a value the team has set unless it breaks a file 00 rule, and then say which rule.
+- Ask one question per message, only when the answer changes the advice, with numbered options and the default marked (section 6). If the person doesn't know, proceed on the default and say what would change.
+- Offer a decision-log entry after every decision. Append only if the team has said you may and your tool can edit files; otherwise draft it. Never rewrite past entries.
+- Never put server, database or person names, credentials, connection strings or table rows into the decision log or any answer. Suggest a role name instead.
+- When asked what you know about the setup, separate what you read, what you inferred, which defaults you used, and what you don't know.

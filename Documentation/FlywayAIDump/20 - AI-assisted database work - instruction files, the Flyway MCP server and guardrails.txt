@@ -1,0 +1,396 @@
+Flyway Enterprise AI library - file 20 of 32
+AI-assisted database work - instruction files, the Flyway MCP server and guardrails
+Flyway reference library, October 2026. Generic guidance written for your AI assistant. It contains no data from your environment, and you shouldn't add any to these files.
+
+What this covers: Where each AI tool reads its always-loaded instructions, a sample instructions file to commit, the Flyway MCP server (preview): what it does, every tool it exposes, how to choose a toolset, how to start it, how to register it in each tool (Redgate-documented and vendor-documented setups labelled apart), and what to check when the agent can't see it. Then which environments an assistant may touch, the guardrails that keep it drafting while people review and the pipeline deploys, prompts that work, limits, and the Flyway Desktop AI services (preview).
+
+Not in this file: Loading the library itself into each tool, knowledge bases and local models (file 03). Ready-made skills (file 21). Every way to make a change, including the MCP agent workflow (file 08). Code review rules (file 13). Pipelines and approvals (files 11 and 12). Audit evidence (file 17). Versions and preview status (file 25).
+
+Contents:
+1. The principle: the assistant proposes, Flyway produces what runs
+2. Where each tool reads instructions
+3. A sample instructions file
+4. A path-specific file for migrations
+5. The Flyway MCP server (preview)
+6. Prerequisites and starting the server
+7. Registering the server: the two Redgate-documented setups
+8. Registering the server in other tools (vendor-documented)
+9. Environments the assistant may touch
+10. Human-in-the-loop guardrails
+11. Prompts that work, and what to keep out
+12. In daily use
+13. Limits
+14. Flyway Desktop AI services (preview)
+15. Instructions for the AI assistant using this file
+
+## 1. The principle: the assistant proposes, Flyway produces what runs
+
+The question isn't "do we use AI?" It's "who approves what AI writes to the database?" An assistant works against your own development database and the schema model. Flyway's comparison engine generates the migration that will run. That migration goes through the same gates as anyone's: code review (file 13), the pull request check, human reviewers and the pipeline's approvals (files 11 and 12). You don't have to trust the model; you have to trust your gates.
+
+Nothing in this library has an assistant deploying to a shared environment. AI drafts, a person reviews, the pipeline deploys.
+
+## 2. Where each tool reads instructions
+
+Put the rules block from section 3 in the always-loaded file of every tool your team uses. Locations come from each vendor's page, read in October 2026.
+
+| Tool | Always-loaded file | Notes |
+|---|---|---|
+| Copilot in VS Code | `.github/copilot-instructions.md`, `AGENTS.md` | Path-specific `.github/instructions/*.instructions.md` with `applyTo`. Nested `AGENTS.md` only with `chat.useNestedAgentsMdFiles` on |
+| Copilot in Visual Studio | `.github/copilot-instructions.md` | Turn it on under Tools > Options. Path-specific files work; GitHub's support table doesn't list `AGENTS.md` here |
+| Copilot in JetBrains | `.github/copilot-instructions.md` | Path-specific files work. A personal `global-copilot-instructions.md` sits under Settings > Tools > GitHub Copilot > Customizations |
+| Copilot in SSMS | `.github/copilot-instructions.md` | Turn it on under Tools > Options > GitHub > Copilot > Copilot Chat. Personal file: `%USERPROFILE%/copilot-instructions.md` |
+| Copilot cloud agent, code review on GitHub.com, Copilot CLI | `.github/copilot-instructions.md`, `AGENTS.md`, `CLAUDE.md`, `GEMINI.md` | Organization instructions set by an administrator add to these |
+| Claude Code | `CLAUDE.md` or `.claude/CLAUDE.md` | Reads `AGENTS.md` only without a `CLAUDE.md`, so start `CLAUDE.md` with `@AGENTS.md`. `.claude/rules/*.md` with `paths:` for folder-specific rules |
+| Gemini CLI | `GEMINI.md` | Add `AGENTS.md` through `context.fileName` in `.gemini/settings.json` |
+| Gemini Code Assist | `GEMINI.md` | VS Code reads it up to the `.git` root and in subfolders; JetBrains reads `GEMINI.md` or `AGENT.md` at the project root only |
+| Kiro | `.kiro/steering/*.md` with `inclusion: always`, and `AGENTS.md` | `fileMatch` steering can target the migrations folder |
+| Amazon Q Developer | `.amazonq/rules/*.md` | Toggled per chat session; check it's on |
+| Continue (local models) | `.continue/rules/*.md` | `alwaysApply: true`; not used for autocomplete |
+| Cursor | `AGENTS.md` or `.cursor/rules/` | Check Cursor's documentation for the current format |
+| Cloud chat and agents: Claude Projects, Microsoft 365 Copilot, Copilot Studio, Azure AI Foundry, Bedrock agents, Gemini Enterprise, Gems | The instructions field | File 03 covers limits and where the library goes |
+
+Points to know:
+
+- One `AGENTS.md` serves Copilot in VS Code, the cloud agent, Kiro, Gemini CLI and Claude Code (by import). Copy it to `.github/copilot-instructions.md` for Visual Studio, JetBrains and SSMS, and keep the copies identical through code owners.
+- Instruction sources add together with no guaranteed order, and they guide rather than enforce. Branch protection and the pipeline enforce.
+- In Copilot, expand "References" on an answer to confirm the file was used. In Gemini CLI, `/memory show`.
+
+Documentation: https://docs.github.com/en/copilot/reference/custom-instructions-support and https://learn.microsoft.com/en-us/ssms/github-copilot/custom-instructions
+
+## 3. A sample instructions file
+
+Save as `AGENTS.md` at the repository root and copy it where section 2 says. The assistant can fill each `{placeholder}` from what it works out about your project (file 01); delete the option that doesn't apply.
+
+> Not from Redgate docs — starting point, validate in your environment.
+
+```markdown
+# Database changes in this repository
+
+Every database change here goes through Flyway. These are rules, not preferences. If a task seems to need you to break one, stop and ask.
+
+## Project facts
+- Flyway project: {path to flyway.toml}. TOML only, never flyway.conf.
+- Approach: [schema model plus generated migrations] [versioned migrations only].
+- Environments you may use: development {dev env} (the engineer's own database), shadow {shadow env} (throwaway), build {build env} (the pull request check database). You have no others.
+- Target platforms: SQL Server, Azure SQL Database and Azure SQL Managed Instance. Check the platform before you suggest syntax.
+- Flyway is installed and licensed. Never run flyway auth and never ask for a token.
+- Reference: the Flyway Library ({library path}). Start with file 00 and cite file numbers.
+- Reply in the language the person writes in. Keep commands, keys, file names and error text in English.
+
+## Rules
+1. Route every schema change through Flyway. Change the development database, capture into the schema model, and generate one versioned migration and its undo. Never hand-edit an applied migration, and never hand-edit schema model files unless this team chose schema-model-first editing (file 08).
+2. Never run DDL or DML against any database except development and shadow, by any route.
+3. Never edit or rename a migration that is merged to main. Fix forward. Never run repair, clean, baseline or undo.
+4. Put the ticket key {ticket key pattern} in the branch name, the migration description and the pull request title (file 30).
+5. Never request, read, display or store production data or personal data.
+6. Never ask for, accept or write credentials or connection strings. If you find one, stop and tell a human.
+7. Before handing over, run flyway check -code -check.code.failOnError=true -environment={build env} and fix findings rather than weakening a rule.
+8. Stop at a pull request for human review. Never merge, approve or deploy.
+9. The Flyway MCP server is preview. Follow this workflow, not remembered tool names, and say so if a tool is missing.
+10. Don't invent Flyway syntax. If a command fails, check https://documentation.red-gate.com/flyway and say what differed.
+```
+
+Keep it short; detail belongs in the library and in skills (file 21). On small-context models keep rules 1 to 3, 6, 8 and 10.
+
+## 4. A path-specific file for migrations
+
+Save as `.github/instructions/migrations.instructions.md`. Copilot chat in VS Code, Visual Studio and JetBrains, and Copilot code review on GitHub.com, apply it to matching files. For Kiro, the same text works as a `fileMatch` steering file; for Claude Code, as a `.claude/rules/` file with `paths:`.
+
+> Not from Redgate docs — starting point, validate in your environment.
+
+```markdown
+---
+applyTo: "**/migrations/**"
+---
+# Migration files
+- A versioned migration is immutable once merged. Never edit one; add a new version.
+- Flag: dropped tables or columns, narrowed column types, renames done as drop and create, a new NOT NULL column without a default, index builds on large tables.
+- Check the version is higher than the highest on main, that a matching undo script exists, and that the ticket key is in the description.
+- Do not suggest running the migration by hand against a shared database.
+```
+
+## 5. The Flyway MCP server (preview)
+
+PREVIEW. Redgate's documentation says: "This feature is in preview and under active development. Tool names, parameters, and behavior may change significantly, or tools may be removed, in future releases without notice." Instruct agents by workflow, not by tool name, and read the release notes before you upgrade (file 25).
+
+The server exposes the development workflow you'd run in Flyway Desktop or the CLI as tools an AI agent can call. It needs engine 13.0.0 or later and Flyway Enterprise. It's a local stdio server: your AI tool starts it as a process on your machine, so only tools that can launch a local process can use it. It calls no Redgate AI service; what the agent reads goes to your AI tool's own model, which is why file 03 matters.
+
+Its boundary is your configuration: it applies changes to whatever the `[flywayDesktop]` development and shadow settings in `flyway.toml` point at. Redgate's page says that if those point elsewhere, or your AI tool edits `flyway.toml` directly, the boundaries don't apply.
+
+Redgate's tool reference lists project tools (`load_project` first), schema model and development database diff and update tools, and, with `develop_migrations` only, `create_schema_model_checkpoint`, `create_diff_migrations`, `generate_migrations`, `review_code` and `test_migrate`.
+
+- `generate_migrations` writes scripts from the schema model against the shadow database. From engine 13.10.0 an optional `generateUndoScripts` parameter overrides the project setting for one call. The result says whether undo scripts were written (`undoScriptsGenerated`).
+- `review_code` reviews one script; it doesn't replace `flyway check -code` in the pull request check.
+- `test_migrate` runs pending migrations against the shadow and stops at the first failure. It may re-provision the shadow if its history has diverged, and an optional `rebuild` parameter forces a full re-provision; the result says whether that happened (`reprovisioned`). Green proves a script runs, not that it's safe on production volumes.
+- The three-sided diff (from engine 13.7.0) is for after you pull teammates' changes: take a checkpoint, pull, then diff. Changes are tagged `new`, `existing`, `missing` or `conflict`, so local work isn't overwritten.
+
+It can't run `migrate`, `info`, `repair` or drift checks, and can't edit `flyway.toml`. Redgate's launch blog mentions agents checking migration status, but no migration-status tool exists in the tool reference; use `flyway info` in a terminal. Review each change with `get_diff_details` before an agent applies anything.
+
+Tool reference. "Both" means `develop_state` and `develop_migrations`. Every tool except `load_project` takes the `workspaceId` that `load_project` returns, so it isn't repeated below. Parameters are required unless marked optional. Names and parameters are preview and can change; this list matches Redgate's tool reference and a running server.
+
+| Tool | Toolset | What it does | Other parameters | Returns |
+|---|---|---|---|---|
+| `load_project` | Both | Loads a project into a new workspace. Call it first. Loading another project discards the previous artifacts | `projectFolder` (absolute path to the folder holding `flyway.toml`) | `workspaceId` |
+| `reload_project` | Both | Reloads after `flyway.toml` changes, keeping artifacts | None | |
+| `create_diff_schema_model` | Both | Diffs the development database against the schema model (one stored per workspace) | None | `diffId` and the selectable differences |
+| `update_schema_model` | Both | Writes selected differences into the schema model files | `diffId`, `changes` | Updated files, relative to the schema model folder |
+| `create_diff_development` | Both | Diffs the schema model against the development database, in the direction that updates the database. With a checkpoint, a three-sided diff | `checkpointId` (optional) | `diffId`, differences, `threeSidedDifferences` |
+| `update_development` | Both | Applies selected differences to the development database | `diffId`, `changes` | `changesDeployed` and the objects updated |
+| `get_diff_details` | Both | Unified diff text for one changed object from any diff | `diffId`, `changeId` | Diff text |
+| `create_schema_model_checkpoint` | `develop_migrations` | Captures a schema model checkpoint for a three-sided diff | None | `checkpointId` |
+| `create_diff_migrations` | `develop_migrations` | Diffs the schema model against the migrations built on the shadow | None | `diffId` and the differences not yet in a migration |
+| `generate_migrations` | `develop_migrations` | Generates migration scripts using the project's naming convention. Undo scripts follow `[flyway.generate] types`, falling back to `[flywayDesktop.generate] undoScripts`, unless overridden for the call | `migrationsDiffId`, `changes`; `description` (optional); `generateUndoScripts` (optional) | Folder, generated files, warnings, `undoScriptsGenerated` |
+| `review_code` | `develop_migrations` | Code review of one migration script | `file` (absolute or project-relative path) | Issues, rule definitions, `total_rules_checked` |
+| `test_migrate` | `develop_migrations` | Runs pending migrations on the shadow | `rebuild` (optional, forces a full re-provision) | `results` per file (`success`, `failed` or `pending`), `error`, `reprovisioned` |
+
+Selection rules: `changes` takes a list of change IDs or a single `*` for everything, never both. Unselected dependencies of the changes you select are included automatically, so read the diff for objects you didn't pick.
+
+The order Redgate's worked example follows: `load_project`, `create_diff_schema_model`, `update_schema_model`, `create_diff_migrations`, `generate_migrations`, then `review_code` on the new file and, optionally, `test_migrate`. Describe that workflow in the instructions file rather than scripting tool calls.
+
+Documentation: https://documentation.red-gate.com/flyway/reference/usage/flyway-mcp-server/tool-reference
+
+## 6. Prerequisites and starting the server
+
+- Engine 13.0.0 or later, licensed and signed in for Flyway Enterprise (file 04). `flyway version` reports both.
+- `flyway.toml` names a development and a shadow environment under `[flywayDesktop]`, matching environments defined in the file. Without them the toolsets fail with `error: No such environment`. A freshly created project often has neither filled in, so check before registering.
+- Development is the engineer's own database; shadow is a throwaway database they own (file 16). Never point either at test, UAT or production.
+- `-mcp.toolsets` has no default and is required; without it the server fails to start. Values: `develop_state` (schema model and development database kept in sync, no generation), `develop_migrations` (adds checkpoints, generation, test and review) and `all` (today identical to `develop_migrations`; Redgate advises a named toolset because `all` may change). `-mcp.maxLogs` defaults to 100.
+
+Choosing a toolset:
+
+- A team adopting the server: start with `develop_state`, Redgate's narrowest toolset, so the agent keeps the schema model and development database in step but writes no migrations. Move to `develop_migrations` by pull request once the developer workflow in file 08 is routine.
+- A sandbox or proof of concept, or a developer who needs the agent to generate and test migrations: use `develop_migrations` from the start. Migration diff, generation and `test_migrate` exist only there, so `develop_state` can't complete the workflow.
+- Don't use `all`. It's identical to `develop_migrations` today, and Redgate advises a named toolset because `all` may change.
+
+The minimal command is `flyway mcp -mcp.toolsets=develop_state`, or `flyway mcp -mcp.toolsets=develop_migrations` for a sandbox. You don't run it yourself: your AI tool starts it from the `command` and `args` you register. Check `flyway version` works in a terminal first.
+
+Both snippets below appear on Redgate's Flyway MCP Server page.
+
+```toml
+[flywayDesktop]
+developmentEnvironment = "development"
+shadowEnvironment = "shadow"
+
+[flyway.generate]
+types = ["versioned", "undo"]
+```
+
+Documentation: https://documentation.red-gate.com/flyway/reference/usage/flyway-mcp-server/mcp-server-configuration
+
+## 7. Registering the server: the two Redgate-documented setups
+
+Redgate's "Register with your AI tools" page documents two clients: Claude Code and VS Code with GitHub Copilot Chat. The `command` and `args` are the same; only the file and root key differ. For Claude Code the documented entry is `"type": "stdio"`, `"command": "flyway"` and `"args": ["mcp", "-mcp.toolsets=<toolset>", "-mcp.maxLogs=100"]`, with no `env` block. Redgate advises bare `flyway` from `PATH` in a committed file, not a machine-specific path. Its examples use `develop_state` on the registration page and `develop_migrations` on the configuration page. The blocks below start a team with `develop_state`; for a sandbox, or when the agent must generate and test migrations, change only the toolset argument to `-mcp.toolsets=develop_migrations` (section 6).
+
+Claude Code, `.mcp.json` at the repository root, root key `mcpServers`:
+
+> Not from Redgate docs — starting point, validate in your environment.
+
+```json
+{
+  "mcpServers": {
+    "flyway": {
+      "type": "stdio",
+      "command": "flyway",
+      "args": ["mcp", "-mcp.toolsets=develop_state", "-mcp.maxLogs=100"]
+    }
+  }
+}
+```
+
+VS Code, `.vscode/mcp.json`, root key `servers`:
+
+> Not from Redgate docs — starting point, validate in your environment.
+
+```json
+{
+  "servers": {
+    "flyway": {
+      "type": "stdio",
+      "command": "flyway",
+      "args": ["mcp", "-mcp.toolsets=develop_state", "-mcp.maxLogs=100"]
+    }
+  }
+}
+```
+
+JSON can't carry the marker line, so say in the pull request that adds either file that it is a starting point. Points to know:
+
+- VS Code also reads a portable `.mcp.json` (key `mcpServers`) at the workspace root, which Copilot harness sessions read directly. VS Code's page says servers in `.vscode/mcp.json` that need interactive inputs aren't forwarded to those sessions.
+- If a GUI-launched tool on Windows can't find `flyway`, Redgate suggests `flyway.cmd`. Name the file exactly, with the leading dot, and restart the tool after editing.
+- Every session starts with `load_project`, which needs the absolute path of the folder holding `flyway.toml` (Flyway Desktop may have used a subfolder). One registration per repository is enough; name each project's folder in the instructions file.
+- Committing the file is a decision: Redgate warns that cloud-hosted agents that honor it may start the server for you. Record it in the decision log (file 01). Never put a token, password or connection string in any MCP file.
+- Teams move to `develop_migrations` by pull request once the developer workflow in file 08 is routine; a sandbox starts there (section 6).
+- Redgate's documented entry has no `env` block. `REDGATE_FLYWAY_MCP_SERVER_FEATURE` doesn't appear on any Redgate MCP page, so don't add it. If a file you inherit sets it, test that the server still starts without it before removing it.
+- Claude Code can also load an MCP config from another location: `claude --mcp-config <path to .mcp.json>`.
+
+If the agent can't see or use the server, check in this order. Faults after registration (tool errors, logs, file locations) are in file 23, section 12.
+
+| Symptom | Check |
+|---|---|
+| `flyway` not recognised | Flyway isn't on `PATH` for the process the AI tool starts. Add it to `PATH`, or use the full path (or `flyway.cmd` on Windows) in `command` for a local, uncommitted registration |
+| The agent doesn't detect the server | The file must be named exactly `.mcp.json`, with the leading dot. Windows can hide a `.txt` extension, so `.mcp.json.txt` looks right in Explorer; show file extensions to check. It must sit in the folder the tool was launched from (the repository root for Claude Code). Restart the AI tool after any edit, and approve the project's server if the tool asks |
+| Nothing happens when you ask | The session must call `load_project` first. Ask for it explicitly ("Load the Flyway project in this folder") and expect a workspace ID back |
+| Can't find `flyway.toml` | The project folder isn't the folder you passed. Flyway Desktop may have created the project in a subfolder; pass that folder's absolute path |
+| `No such environment` or missing `[flywayDesktop]` environments | Add `developmentEnvironment` and `shadowEnvironment` under `[flywayDesktop]`, each naming an environment that exists (section 6) |
+| A tool you expected is missing | The registered toolset doesn't include it. Migration diff, generation, `review_code` and `test_migrate` need `develop_migrations` |
+
+Where the server keeps its files:
+
+| Purpose | Windows | Linux |
+|---|---|---|
+| Session workspace artifacts (diffs) | `%tmp%` | `/tmp` (or `$TMPDIR` / `java.io.tmpdir`) |
+| Licensing and feature usage | `%appdata%\Redgate` | `~/.config/Redgate` |
+| Server logs (kept up to `-mcp.maxLogs`) | `%localappdata%\Red Gate\Logs\Flyway` | `~/.local/share/Red Gate/Logs/Flyway` |
+
+Read the newest log in the logs folder for the server's own error text. Treat logs as project data and redact them before you share them with anyone (file 23).
+
+Documentation: https://documentation.red-gate.com/flyway/reference/usage/flyway-mcp-server/register-with-your-ai-tools
+
+## 8. Registering the server in other tools (vendor-documented)
+
+Redgate doesn't document these. Each uses the vendor's own stdio format, read in October 2026, with the same `command` and `args` as section 7. Prove each one in your proof of concept.
+
+| Tool | Where | Root key and notes |
+|---|---|---|
+| Copilot in Visual Studio | `<solution folder>\.mcp.json`, `.vscode\mcp.json`, or `%USERPROFILE%\.mcp.json` | `servers`. Tools are disabled by default; enable each. Because it reads `.vscode\mcp.json`, the VS Code file in section 7 can serve both. If the solution sits at the repository root, Claude Code's `.mcp.json` uses `mcpServers` instead, so test which file Visual Studio picks up |
+| Copilot in JetBrains | Chat, Agent mode, tools icon, Add MCP Tools | `servers`. The file's path on disk isn't documented, so each developer adds it in the UI |
+| Copilot in SSMS | Agent mode, Tools icon, "+", Add custom MCP server (type stdio); or `%USERPROFILE%\.mcp.json` | `servers`. Agent mode only, from SSMS 22.7. Tools are disabled by default |
+| Claude Code (command line) | `claude mcp add --transport stdio flyway --scope project -- flyway mcp -mcp.toolsets=develop_state` | Writes `.mcp.json`. The `--` separates Claude's options from the server command |
+| Gemini CLI | `.gemini/settings.json` (project) or `~/.gemini/settings.json` | `mcpServers`. Stdio servers connect only in a trusted folder (`gemini trust`). Variables named like `*TOKEN*` are withheld from the server unless listed in `env`; rely on the developer's cached Flyway sign-in |
+| Gemini Code Assist | VS Code: `~/.gemini/settings.json`; JetBrains: `mcp.json` in the IDE configuration folder | `mcpServers`. Reload the window after changes |
+| Kiro | `.kiro/settings/mcp.json` or `~/.kiro/settings/mcp.json` | `mcpServers`. Never set `autoApprove` to `"*"`; Redgate's guidance is to review each change |
+| Amazon Q Developer (IDE) | Chat panel, tools icon, "+"; writes `.amazonq/default.json` (local) | Commit whatever file the UI writes. Leave the Flyway tools on Ask |
+| Continue, LM Studio | `.continue/mcpServers/*.yaml`; LM Studio's `mcp.json` | Continue: agent mode only. Tool schemas use up a small local context window |
+| Claude Projects, Microsoft 365 Copilot, Copilot Studio, Azure AI Foundry, Bedrock, Gemini Enterprise | Not applicable | Cloud services can't start a local process. Use the library there; keep MCP in an IDE or CLI |
+
+Kiro's block, for example:
+
+> Not from Redgate docs — starting point, validate in your environment.
+
+```json
+{
+  "mcpServers": {
+    "flyway": {
+      "command": "flyway",
+      "args": ["mcp", "-mcp.toolsets=develop_state"],
+      "disabled": false
+    }
+  }
+}
+```
+
+Organization controls:
+
+- The "MCP servers in Copilot" policy is off by default for Copilot Business and Enterprise. It also governs agent mode and MCP in SSMS. An administrator turns it on before anyone sees the Flyway tools.
+- An enterprise allow list can match a server by its command array. GitHub's page says the array must match the configured command exactly, so changing the toolset can take a developer outside the list.
+
+Documentation: https://learn.microsoft.com/en-us/visualstudio/ide/mcp-servers, https://learn.microsoft.com/en-us/ssms/github-copilot/mcp-servers, https://code.claude.com/docs/en/mcp, https://kiro.dev/docs/mcp/configuration/ and https://docs.github.com/en/copilot/how-tos/administer-copilot/manage-mcp-usage/configure-enterprise-allowlist
+
+## 9. Environments the assistant may touch
+
+| Environment | Assistant may | Notes |
+|---|---|---|
+| `development` | Read, diff, apply selected changes | The engineer's own database |
+| `shadow` | Build and test migrations | Throwaway; Test Migrate may reprovision it |
+| `build` | Run `check` as an automated step | The pull request check database, owned by the pipeline |
+| `test`, `uat`, `production` | Nothing | No credentials, no tools, no exceptions. The pipeline deploys here, behind approvals |
+
+The same applies to assistants that act through your own database connection. Copilot in SSMS runs queries with your login's permissions and its agent mode can change schema with your approval, so open it only in a query window connected to your development database.
+
+## 10. Human-in-the-loop guardrails
+
+Your organization's AI policy governs; these rules sit inside it.
+
+Redgate's MCP security guidance says to use the server only with trusted projects and databases, because anything the server can reach is within the agent's reach, and to secure development and shadow environments, not just production.
+
+| Guardrail | In practice |
+|---|---|
+| AI drafts, a person reviews | Every generated or drafted migration goes through a pull request with code owners, `check -code` and the check build (files 08 and 13) |
+| The pipeline deploys | No agent holds credentials for shared environments or runs `migrate`, `undo`, `repair`, `clean` or `baseline` against them (file 11) |
+| No autonomous deployment | An assistant never deploys on its own, whatever tool or model it runs on (file 24) |
+| No auto-approve | Leave tool approval on (Kiro `autoApprove`, Amazon Q "Always allow", SSMS and Visual Studio tool toggles) for anything that changes a database |
+| No production or personal data | Development and shadow hold schema, empty tables or synthetic rows only |
+| No credentials in prompts or files | Flyway resolves secrets at run time (file 10) |
+| Approved tools only | Use only tools and models your organization approved (file 03). Flyway Desktop AI services (preview) and SQL Prompt AI are governed by one organization-wide switch in the Redgate portal; the MCP server sits outside it |
+| Agents that route around Flyway | Redgate's own published experiments show coding agents reaching for an application ORM's migration tool, or a general-purpose database MCP server with a run-any-SQL tool, even when told to use Flyway. Neither leaves a migration, a check or a history row. Register only the Flyway MCP server against development and shadow, leave other database tools unregistered or read-only, and don't use community Flyway MCP servers that run `repair` or `migrate` from chat: an agent that can run `repair` can erase the checksum evidence that an applied script was edited |
+| AI-written pipeline files | Review network rules, secrets and environment separation by hand. A Redgate-published walkthrough had an assistant scaffold a working pipeline quickly and also propose insecure network choices a person had to reject (files 11 and 12) |
+| Evidence from your trail | Redgate doesn't document the MCP server's local logs as an audit record. Use Git, the pull request, pipeline logs and the schema history table (file 17) |
+
+Prompts aren't the control. The pull request, code review, the build and drift checks (file 14) are. A change made outside Flyway shows up as drift.
+
+## 11. Prompts that work, and what to keep out
+
+| Job | Prompt | Load |
+|---|---|---|
+| Migration from a ticket | "Ticket `<ticket-key>`: add column `<column>` to `<table>`. Follow file 08. Show the schema model diff first and apply nothing. Then generate the migration and undo, list risky changes, and stop at a pull request." | Files 08 and 30 |
+| Review a pull request | "Review this migration and its undo with the review card in file 27. Say what you can't tell from the diff." | Files 13 and 27 and the diff |
+| Explain a check report | "Which findings in this check report block the merge, which are noise, and what is the smallest fix? Names removed." | Files 13 and 22 and the report |
+
+Add "name the file and section you used" to any of them.
+
+Keep out of every prompt: production data and query results from shared databases, personal data, connection strings, passwords and tokens, and server, database and client names unless your policy allows them. If you paste one by mistake, stop, tell your security contact, and rotate any credential.
+
+## 12. In daily use
+
+| Who | Ask |
+|---|---|
+| Developer | "Load the Flyway project in `<folder>` and diff my development database against the schema model. List the changes; apply nothing." |
+| Platform owner | "We use Copilot in Visual Studio and Claude Code. Which instruction and MCP files do we commit?" |
+| DBA | "This pipeline log has secrets removed. Which scenario card in file 22 matches?" |
+
+## 13. Limits
+
+- The Flyway MCP server is preview, works on development and shadow only, and has no migrate, info, deploy, drift or migration-status tool. Use the CLI and the pipeline (files 11 and 12).
+- `develop_state` can't generate or test migrations. That needs `develop_migrations`.
+- Flyway Desktop AI services (preview) need an online licence and network access to Redgate's AI endpoint (section 14).
+- Redgate documents registration for Claude Code and VS Code only. Every other setup in section 8 is the vendor's format, untested by Redgate.
+- Redgate's MCP pages don't list supported databases. Prove your SQL Server and Azure SQL setup on a development database first.
+
+## 14. Flyway Desktop AI services (preview)
+
+These are separate from the MCP server. They run inside Flyway Desktop and call a Redgate-hosted AI service; the MCP server calls no Redgate AI. They need Flyway Desktop 8.7.2 or later. "Explain this change" arrived later, in Desktop 9.9.1 (file 25).
+
+| Feature | What it does |
+|---|---|
+| Migration script description | Suggests the filename description from the script's contents and the project's naming convention, instead of your user name. You can edit it. Not offered for baseline scripts. Limited to 50 characters (from Desktop 9.10.2), so file names stay clear of Windows "path too long" errors |
+| Migration script summary | A short summary of intent under each script on the Migration scripts page, shown automatically when enabled. Baseline scripts excluded |
+| Commit message | Select scripts in the Git side panel and press the AI button |
+| Explain this change | In object level history, explains what a commit did to the selected object (file 08, section 18) |
+
+Switching them on:
+
+1. Allow `api.prod.prompt.redgate-platform.com` on port 443 through your firewall or proxy.
+2. Users belong to a Redgate organization, through SSO or a Redgate Portal invite.
+3. Use an online licence. Offline permits don't work with AI services.
+4. An organization admin enables AI in the Redgate Portal settings (https://portal.red-gate.com/settings). It's one Redgate-wide setting that also covers Redgate Assistant (preview), SQL Prompt and Redgate Monitor (file 19).
+5. Each user can switch AI off locally in Desktop Settings. Some users also need to turn it on under Preview features in Desktop.
+
+Redgate's pages describe the entitlement differently, so confirm with your Redgate account team before you rely on it.
+
+If nothing comes back: sign out and back in, check the firewall rule, check the organization setting and the user's membership, and check the Desktop version (file 25). Very large, empty or unintelligible scripts or diffs get no response. Requests are rate limited; wait five minutes and try again.
+
+Data handling, as Redgate's AI services page states it:
+
+- Desktop may send migration script contents and commit diffs to Redgate's private AI service.
+- Data isn't used for training, isn't retained and isn't shared. It's processed transiently and can't be accessed after the response.
+- Redgate states it can't access information sent to the private AI service. Usage statistics may be collected.
+- The service runs on Redgate's Amazon Bedrock in Frankfurt, London, Ireland and Paris. The page lists the models used; read it there, because the list changes.
+
+Script contents and diffs are schema, not table data, but a script can contain literal values (seed rows, defaults, comments). Check with your security team before switching it on, as section 10 says, and record the decision in your decision log (file 01).
+
+Documentation: https://documentation.red-gate.com/fd/ai-services-in-flyway-317496573.html
+
+## 15. Instructions for the AI assistant using this file
+
+- Label the Flyway MCP server, Flyway Desktop AI services and Redgate Assistant as preview whenever you mention them.
+- When describing MCP setup, say whether it is Redgate-documented (section 7) or vendor-documented (section 8).
+- Never request, display or store production data or credentials. If a user pastes either, stop, say so and don't repeat it.
+- Point the MCP server and any Flyway command you run only at development and shadow. Refuse anything that changes test, UAT or production; hand it to the pipeline (file 11).
+- Before MCP setup, ask which AI tools the team uses, check `flyway.toml` has development and shadow environments, and ask whether the team commits the MCP file.
+- Start every MCP session by loading the project, then show changes before applying any. Stop at a pull request.
+- Recommend `develop_state` as a team's first toolset, and `develop_migrations` for a sandbox or whenever the agent must generate or test migrations. Never recommend `all`.
+- Use only the tools, parameters and return fields in section 5. If a tool is missing, say so and check the registered toolset; don't invent one. There is no migration-status tool; use `flyway info` in a terminal.
+- Register the server the way Redgate documents it: `stdio`, bare `flyway`, `-mcp.toolsets` and `-mcp.maxLogs`, no `env` block. Don't add `REDGATE_FLYWAY_MCP_SERVER_FEATURE`.
+- When the server doesn't respond, work through the checks in section 7 before anything else.
+- For skills, file 21. For loading the library, file 03. For a failure, file 22.
+- Answer in the language the person writes in. Keep commands, keys, file names and error text in English.

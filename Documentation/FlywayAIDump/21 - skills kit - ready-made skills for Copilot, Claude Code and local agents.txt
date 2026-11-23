@@ -1,0 +1,434 @@
+Flyway Enterprise AI library - file 21 of 32
+Skills kit - ready-made skills for Copilot, Claude Code and local agents
+Flyway reference library, October 2026. Generic guidance written for your AI assistant. It contains no data from your environment, and you shouldn't add any to these files.
+
+What this covers: What a skill is, where each AI tool reads skills (and what to use in Kiro, Gemini and tools without skills), and how to install them once for the team. Then fourteen ready-made skills you can commit, and how to test them and keep them in step with library updates.
+
+Not in this file: Instruction files, the Flyway MCP server (preview) and guardrails (file 20). Loading the library into each tool (file 03). The procedures the skills point to (files 06 to 30 as each skill names).
+
+Contents:
+1. What a skill is
+2. Where each tool reads skills
+3. Installing skills for the team
+4. Kiro steering, Gemini and tools without skills
+5. Skill: flyway-library
+6. Skill: new-migration
+7. Skill: migration-review
+8. Skill: pr-check-failure
+9. Skill: version-collision
+10. Skill: drift-triage
+11. Skill: release-readiness
+12. Skill: hotfix-reconcile
+13. Skill: poc-evidence
+14. Skill: script-runner-package-to-migration
+15. Skill: decision-to-skill
+16. Skill: workflow-design
+17. Skill: ssdt-cutover
+18. Skill: change-request
+19. Adapting, testing and keeping skills in step
+20. In daily use
+21. Limits
+22. Instructions for the AI assistant using this file
+
+## 1. What a skill is
+
+A skill is a folder holding a `SKILL.md` file, and optionally files it links to. `SKILL.md` starts with YAML front matter holding `name` and `description`, then the instructions. The format is an open standard (https://agentskills.io). The assistant reads only each skill's name and description until a request matches, then loads the body.
+
+Portable rules:
+
+- `name`: lowercase letters, digits and hyphens, up to 64 characters, identical to the folder name. An invalid name makes the skill silently fail to load.
+- `description`: what and when, trigger words first, up to 1,024 characters, with no unquoted colon followed by a space.
+- Front matter holds `name` and `description` only; other fields aren't portable.
+
+Each skill below has "Read first" (library files), steps, a fixed output and a "Never" list. Detail stays in the library, so a library update changes behavior without editing the skills.
+
+## 2. Where each tool reads skills
+
+From each vendor's page, read in October 2026.
+
+| Tool | Project folders | Personal folders |
+|---|---|---|
+| GitHub Copilot in VS Code, the cloud agent and Copilot CLI | `.github/skills/`, `.claude/skills/`, `.agents/skills/` | `~/.copilot/skills/`, `~/.agents/skills/` |
+| Copilot in SSMS (agent mode) | `.github/skills/`, `.claude/skills/`, `.agents/skills/` | `~/.copilot/skills/`, `~/.claude/skills/`, `~/.agents/skills/` |
+| Claude Code | `.claude/skills/` | `~/.claude/skills/` |
+| Kiro | `.kiro/skills/` (custom agents need a `skill://` resource entry) | `~/.kiro/skills/` |
+| OpenAI Codex | `.agents/skills/` | Check Codex's documentation |
+| Copilot in Visual Studio or JetBrains chat, Gemini, Amazon Q Developer, Continue, chat apps | Not confirmed on the pages read | Use section 4 |
+
+In VS Code a skill also runs as a slash command, such as `/new-migration`. SSMS lists skills and their errors in its Skills panel.
+
+Documentation: https://code.visualstudio.com/docs/agent-customization/agent-skills, https://learn.microsoft.com/en-us/ssms/github-copilot/agent-skills and https://kiro.dev/docs/skills/
+
+## 3. Installing skills for the team
+
+Commit the skills to the repository so one pull request installs them for everyone.
+
+- Pick one folder: `.claude/skills/<name>/SKILL.md` is read by Copilot in VS Code, SSMS and Claude Code. Add `.kiro/skills/` only for Kiro users, as a generated copy; Windows checks symlinks out as text files unless `core.symlinks` is on.
+- The skills read the library from `docs/flyway-library/`; change the path in `flyway-library` if yours differs. Code owners review skill changes.
+
+## 4. Kiro steering, Gemini and tools without skills
+
+- **Kiro.** Skills work as above. A steering file with `inclusion: always` suits a skill needed in every chat; `inclusion: manual` suits one a person calls (check Kiro's steering page for how).
+- **Gemini CLI and Code Assist.** The pages read describe `GEMINI.md` context files, not skills. Import the one skill you need with `@.claude/skills/<name>/SKILL.md` in `GEMINI.md`, or ask "follow `.claude/skills/<name>/SKILL.md`". JetBrains reads only the root `GEMINI.md`.
+- **Copilot in Visual Studio or JetBrains.** Save the body as `.github/prompts/<name>.prompt.md` (public preview) and run it by name.
+- **Amazon Q Developer.** Save the body in `.amazonq/rules/` and toggle it on for the session.
+- **Continue, Open WebUI, chat apps.** Paste the body as the prompt with the files it names attached (file 03, section 8), or save it as a reusable prompt.
+
+## 5. Skill: flyway-library
+
+> Not from Redgate docs — starting point, validate in your environment.
+
+```markdown
+---
+name: flyway-library
+description: Answers Flyway Enterprise questions from the team's Flyway Library. Use for any Flyway, migration, pipeline, drift, audit, workflow or setup question, before answering from memory.
+---
+# Flyway Library
+
+The library is the numbered files in docs/flyway-library/ ("NN - title.txt"). Answer from them, not from memory, and cite the file number and section.
+
+1. Open file 00 (index and operating rules), then file 01 (how to work out this team's setup, and the decision log).
+2. Use the routing table in file 00 to pick one or two working files. Load only those. On a small context window, follow file 03, section 8.
+3. Answer in the language the person writes in. Keep commands, keys and file names in English.
+
+Rules
+- Label preview features as preview. Take versions only from file 25.
+- Never invent a command, flag or setting. If the library doesn't cover it, say so and give the file 26 link.
+- Never change test, UAT or production. Never ask for credentials or production data.
+```
+
+## 6. Skill: new-migration
+
+> Not from Redgate docs — starting point, validate in your environment.
+
+```markdown
+---
+name: new-migration
+description: Author a Flyway migration from a ticket - diff, generate versioned and undo scripts, review, check, and prepare a pull request. Use for new migration, add column, schema change.
+---
+# New migration
+
+Read first: Flyway Library files 08 (developer workflows), 09 (version numbers), 13 (code review), 30 (ticket keys). Then references/team.md if it exists.
+
+Steps
+1. Ask for the ticket key `<ticket-key>`. Confirm the project folder, and that development and shadow are the engineer's own databases.
+2. Show the diff of development against the schema model. Capture only what the engineer names.
+3. Generate one versioned migration and its undo with Flyway. Never hand-write what Flyway generates.
+4. List risks: drops, renames, type changes, new NOT NULL columns without a default, index builds, data changes.
+5. Run flyway check -code -check.code.failOnError=true -environment=build. Fix findings; never weaken a rule.
+6. Check the version against main, then draft the pull request title with the ticket key.
+
+Never edit an applied migration, run repair, clean, baseline or migrate against a shared environment, or merge, approve or deploy.
+```
+
+## 7. Skill: migration-review
+
+> Not from Redgate docs — starting point, validate in your environment.
+
+```markdown
+---
+name: migration-review
+description: Review a Flyway migration with the team's fixed review card - ticket, scope, data loss, locks, undo, version, code review, evidence. Use for review this migration or pull request.
+---
+# Migration review
+
+Read first: Flyway Library file 27 (review mode and its review card), then 13 (code review), 09 (versions), 14 (undo).
+
+Steps
+1. Read the migration, its undo script, the schema model change and the code review output.
+2. Fill every line of the card in file 27. Write "none found" rather than skip a line. If file 27 and this skill differ, file 27 wins.
+
+Output: the card with its verdict (Approve, Approve with comments, Changes needed, Needs a DBA) and what you couldn't tell from the diff.
+
+Never approve alone (a named person approves in the pull request), ask for production row counts or sample rows, or edit the author's migration.
+```
+
+## 8. Skill: pr-check-failure
+
+> Not from Redgate docs — starting point, validate in your environment.
+
+```markdown
+---
+name: pr-check-failure
+description: Triage a failed pull request check on a Flyway project - read the log, size it, match a scenario card, propose the smallest fix. Use for red check, failed build, code review failure.
+---
+# Pull request check failure
+
+Read first: Flyway Library files 22 (scenario cards), 13 (code review), 12 (the workflow), 23 (tooling faults).
+
+Steps
+1. Ask for the failing step, the first ERROR line and the exit code, with secrets and names removed.
+2. Match a card in file 22 or a row in file 23 and quote its fix.
+3. Propose the smallest fix by pull request. Don't weaken a rule to turn a check green.
+
+Output: step, error, matched card, fix, who decides.
+
+Never run repair, clean or baseline, rerun against a shared environment, or repeat credentials.
+```
+
+## 9. Skill: version-collision
+
+> Not from Redgate docs — starting point, validate in your environment.
+
+```markdown
+---
+name: version-collision
+description: Resolve two Flyway branches that use the same migration version number. Use for version collision, duplicate version, out of order migration, rebase conflict.
+---
+# Version collision
+
+Read first: Flyway Library files 09 (many teams, one database), 22 (scenario cards), 13 (checks).
+
+Steps
+1. List the versions on main and each branch, and which are merged or applied anywhere.
+2. The branch that merges later renumbers its own unmerged migration to a higher version. A migration merged to main is never renumbered.
+3. Read your own flyway.toml for outOfOrder; the engine default is false, but projects created by flyway init or Flyway Desktop write true. State what it is.
+4. Re-run the checks and say who tells the other team.
+
+Never rename or edit an applied migration, use repair to hide a mismatch, or turn on outOfOrder to avoid the conversation.
+```
+
+## 10. Skill: drift-triage
+
+> Not from Redgate docs — starting point, validate in your environment.
+
+```markdown
+---
+name: drift-triage
+description: Triage a Flyway drift report - classify each drifted object, then reconcile it into code or revert it through review. Use for drift detected, check -drift failed, deploy action stopped on drift.
+---
+# Drift triage
+
+Read first: Flyway Library files 14 (drift, snapshots, recovery), 15 (emergency changes), 10 (filters).
+
+Steps
+1. Ask which environment and whether a hotfix happened since the last clean check. Get the drift report from the pipeline run's artifacts.
+2. List each drifted object (type, name, added, changed or removed) and classify it: hotfix made by hand (see hotfix-reconcile), unapproved change (revert through a reviewed script), platform noise (a filter change by pull request), unknown (ask the owner).
+
+Output: a table of object, class, action, owner, ticket.
+
+Never apply a resolution script yourself, turn the check off, or change production outside the pipeline.
+```
+
+## 11. Skill: release-readiness
+
+> Not from Redgate docs — starting point, validate in your environment.
+
+```markdown
+---
+name: release-readiness
+description: Check a database release is ready for production and assemble the evidence - dry run, approvals, drift, rollback path. Use for release day, go or no-go, release evidence.
+---
+# Release readiness
+
+Read first: Flyway Library files 11 (pipelines and approvals), 14 (drift, undo), 17 (audit evidence), 15 (release day).
+
+Checklist (Yes, No or Not applicable, each with evidence)
+1. Every migration has a ticket key and an approved pull request.
+2. The check passed: code review and tests.
+3. A named reviewer read the deployment preview (the flyway check -dryrun report).
+4. A drift check on the target ran clean, or drift is resolved.
+5. The rollback path is decided: undo, fix forward or restore.
+6. Approvers are named, are not the authors, and the environment really enforces the approval on this repository's GitHub plan.
+
+Output: go, no-go or go with conditions, and the missing items.
+
+Never mark an item Yes without evidence, approve the release, or put production data or credentials in the evidence.
+```
+
+## 12. Skill: hotfix-reconcile
+
+> Not from Redgate docs — starting point, validate in your environment.
+
+```markdown
+---
+name: hotfix-reconcile
+description: Bring an emergency production change back into Flyway source control so the next deploy doesn't undo it. Use for hotfix in production, change made outside Flyway, reconcile.
+---
+# Hotfix reconcile
+
+Read first: Flyway Library files 15 (emergency changes), 14 (drift and recovery), 11 (pipelines).
+
+Steps
+1. Get the change as a reviewed script from the DBA, with names removed. Don't ask for production access.
+2. Use the drift report to confirm exactly what changed.
+3. Write it as a normal versioned migration on a branch, with the ticket key `<ticket-key>`, through the usual pull request.
+4. Plan how production records it as applied without running it twice: skipExecutingMigrations with a target marks every pending migration up to the target as applied, so first confirm with info that the hotfix is the only one pending. A person runs it, then a drift check.
+
+Never run skipExecutingMigrations, repair or migrate against production, or skip the pull request because it is an emergency.
+```
+
+## 13. Skill: poc-evidence
+
+> Not from Redgate docs — starting point, validate in your environment.
+
+```markdown
+---
+name: poc-evidence
+description: Collect proof of concept evidence for each success criterion and report pass, fail or open. Use for POC status, POC evidence, did we meet the criteria.
+---
+# POC evidence
+
+Read first: Flyway Library file 05 (success criteria, use cases and evidence), then 12 (pipeline).
+
+Steps
+1. List the success criteria and the use cases being run from file 05.
+2. For each, ask what was run and where the output is: a pull request, a pipeline run, a check report, a dry run.
+3. Mark Pass, Fail or Open with the artifact name. No artifact means Open.
+Output: a table of criterion, result, evidence, blocker, owner.
+
+Never mark Pass without an artifact, or paste production data, names or credentials into the evidence.
+```
+
+## 14. Skill: script-runner-package-to-migration
+
+> Not from Redgate docs — starting point, validate in your environment.
+
+```markdown
+---
+name: script-runner-package-to-migration
+description: Convert a legacy script-runner deployment package into Flyway migrations - split, order, mark decisions, and plan the baseline. Use for convert package, legacy scripts, move off the script runner.
+---
+# Script runner package to migrations
+
+Read first: Flyway Library files 07 (moving off a script runner), 08 (developer workflows), 16 (reference data).
+
+Steps
+1. Ask for the scripts with names removed, check each is UTF-8, and list them in run order.
+2. Propose one versioned migration per change, with a ticket key `<ticket-key>`. Keep data changes apart from schema changes.
+3. Move environment-specific values to placeholders (migrations and SQL callbacks only).
+4. Mark each script Proposed, Needs a DBA, or Already in the baseline (file 07).
+
+Never run anything against a shared environment, merge, or drop a step you don't understand; mark it Needs a DBA.
+```
+
+## 15. Skill: decision-to-skill
+
+> Not from Redgate docs — starting point, validate in your environment.
+
+```markdown
+---
+name: decision-to-skill
+description: Turn a decision-log entry or a chat the team keeps repeating into a new portable skill folder. Use for make a skill, turn this into a skill, we keep asking this.
+---
+# Decision to skill
+
+Read first: Flyway Library files 21 (skill rules and shape) and 01 (the decision log).
+
+Is it a skill? Yes if it repeats, has clear steps and a fixed output. A single fact belongs in the decision log instead.
+
+Steps
+1. Ask for the entry or chat, with names, hosts, credentials and data removed.
+2. Write name and description per file 21, then the body: Read first, Steps, Output, Never, with every command taken from the library.
+3. Give the folder path, a test phrase, and the pull request text citing the decision.
+
+Never copy credentials, data or host names into a skill, drop a Never rule from the source decision, or commit the skill; a person opens the pull request.
+```
+
+## 16. Skill: workflow-design
+
+> Not from Redgate docs — starting point, validate in your environment.
+
+```markdown
+---
+name: workflow-design
+description: Design or review how a team takes a database change from development through pull request, operations hand-off and pipeline, using the intake in Flyway Library file 28. Use for design our workflow, onboard a new team, standardize teams, shared or dedicated databases, database branching.
+---
+# Workflow design
+
+Read first: Flyway Library files 28 (workflow architect), 29 (scenario playbooks), 08 (developer workflows), then 11 and 12 for the pipeline, and the decision log (file 01).
+
+Steps
+1. Work out what you can from the repository first (file 01): flyway.toml, migrations, workflows, branch rules. Say whether the project is configured and in use, or freshly created with defaults.
+2. Run the intake in file 28, section 2, for each team, one question at a time, skipping anything the repository already answers. Match each team to a file 29 scenario card.
+3. Decide in file 28's order, keeping the shared core fixed for every team: pipeline template, naming and versioning, checks, the hand-off to operations, production approvals.
+4. For each choice, give the options, when each fits, and the debt it avoids or creates.
+
+Output: a one-page design per team and a decision-log entry per choice.
+
+Never assume work the team hasn't done, hide a shortcut's debt, or design a path where anything but the pipeline deploys to a shared environment.
+```
+
+## 17. Skill: ssdt-cutover
+
+> Not from Redgate docs — starting point, validate in your environment.
+
+```markdown
+---
+name: ssdt-cutover
+description: Plan a move from SSDT SQL projects and DACPAC deployments to Flyway, per database - choose a path, map artifacts, baseline, swap the pipeline, set cutover rules. Use for SSDT, sqlproj, DACPAC, SqlPackage, move off SQL projects.
+---
+# SSDT cutover
+
+Read first: Flyway Library files 06 (moving off SSDT and DACPAC deployments), 07 (baselining), 12 (pipeline), 29 (scenario playbooks).
+
+Steps
+1. List each database, its owning team, its publish profiles, and anything downstream that still needs a DACPAC.
+2. Pick a path per database from file 06, section 4, and say why.
+3. Map each SSDT artifact (publish profile, SQLCMD variables, pre- and post-deployment scripts, refactor log) to its Flyway equivalent using file 06, section 8.
+4. Plan the last SqlPackage publish, the freeze, each baseline (file 07), the cutover rules (file 06, section 10), and the pipeline swap that removes the publish step (file 12).
+
+Output: a per-database plan and a decision-log entry.
+
+Never plan a SqlPackage publish against a baselined database (a publish that drops objects missing from the project can remove the schema history table), hand-edit a generated script, or move every database at once without a reason.
+```
+
+## 18. Skill: change-request
+
+> Not from Redgate docs — starting point, validate in your environment.
+
+```markdown
+---
+name: change-request
+description: Prepare the change request for a Flyway release - ticket keys, evidence from the dry run and checks, the approval gate, and the closing note. Use for change request, CAB, ServiceNow, Jira Service Management, Azure Boards, GitHub Issues, approval evidence.
+---
+# Change request
+
+Read first: Flyway Library files 30 (ticketing and change requests), 17 (audit evidence), 11 and 12 (approvals).
+
+Steps
+1. Ask which tracker and which gate the team uses. Flyway has no native connector to any tracker; the link is the ticket key and the pipeline (file 30).
+2. Check every migration in the release carries a ticket key in the branch, migration description and pull request title.
+3. Collect the evidence from the pipeline run: check report, dry-run script, code review and drift results, run link.
+4. Draft the change request fields from file 30, section 8: description, implementation plan, backout plan (roll forward by default), test plan, with links.
+5. Confirm the production job waits for the approved change (file 30, section 9), and that the repository's GitHub plan enforces that gate (file 12).
+6. After deployment, draft the closing note.
+
+Never approve or close a change yourself, mark a gate passed without evidence, or put production data or credentials in a change request.
+```
+
+## 19. Adapting, testing and keeping skills in step
+
+- Put team values in each skill's own `references/team.md`: environment names, ticket key pattern, approver roles, project paths. Don't edit library files to suit a skill; a library update replaces them.
+- Add trigger phrases to a description and add to a "Never" list freely; remove a "Never" rule only after a decision in the decision log.
+
+Test before a skill reaches the shared folder, and after any change, in each AI tool the team uses: in a new session, ask the phrase a colleague would use ("Two branches both added version 12"), check the answer names the library files it read, then ask for something on its "Never" list ("just run repair on production") and check it refuses. When the library updates, check the file numbers the skills cite still exist, read file 25, rerun the test phrases, and merge in one pull request.
+
+## 20. In daily use
+
+| Moment | Say | Skill |
+|---|---|---|
+| Starting a ticket | "New migration for `<ticket-key>`: add a column" | new-migration |
+| Reviewing | "Review this migration" | migration-review |
+| A red check | "The pull request check failed, here's the log" | pr-check-failure |
+| Merge conflict on versions | "Two branches both used version 12" | version-collision |
+| Morning review | "Drift detected on uat, triage it" | drift-triage |
+| Release day | "Are we ready for production?" | release-readiness |
+| Change advisory board | "Draft the change request for this release" | change-request |
+| A new team joins | "Design the workflow for the reporting team" | workflow-design |
+| Leaving SQL projects | "Plan the SSDT cutover for this database" | ssdt-cutover |
+
+## 21. Limits
+
+- Skills are instructions, not enforcement. Branch protection, code owners and pipeline approvals enforce.
+- A skill is only as current as the library files it points to. Version and preview facts are in file 25.
+- Skill support outside the section 2 table isn't confirmed on the vendor pages read; section 4 gives the fallback.
+
+## 22. Instructions for the AI assistant using this file
+
+- To install skills, ask which AI tools the team uses, then give sections 2 to 4. To create one, use decision-to-skill and section 19's tests.
+- When a request matches a skill, follow its steps, output and "Never" list, and name the library files you read.
+- Copy `SKILL.md` text exactly, with `---` on line 1 and only `name` and `description` in the front matter.
+- Put team values in `references/team.md`, never in library files.
+- Never add steps that change shared environments, request credentials or expose production data.
+- Answer in the language the person writes in. Keep commands, keys and file names in English.

@@ -1,0 +1,252 @@
+Flyway Enterprise AI library - file 03 of 32
+Private and local AI - running this library on approved and on-premises models
+Flyway reference library, October 2026. Generic guidance written for your AI assistant. It contains no data from your environment, and you shouldn't add any to these files.
+
+What this covers: How to load this library into the AI tool your organization has approved: GitHub Copilot (VS Code, Visual Studio, JetBrains, SSMS), Microsoft 365 Copilot agents and Copilot Studio, Azure OpenAI and Azure AI Foundry, Google Gemini, Anthropic Claude, Kiro, Amazon Q Developer and Amazon Bedrock, or a local or self-hosted model where public AI services are blocked. For each: where the always-loaded rules go, how the library files reach the model, and what to check with security. Then context windows, the minimum file set per job, splitting the library for retrieval, and a test.
+
+Not in this file: The paste-in rules block (file 00). Instruction-file names per tool, Flyway MCP server (preview) registration per tool, and guardrails (file 20). Skills (file 21). How the assistant works out your setup and records decisions (file 01).
+
+Contents:
+1. Why the library suits private AI
+2. Three routes, and the two layers every tool needs
+3. Which library shape fits which tool
+4. Route A: Microsoft tools
+5. Route A: Google, Anthropic and AWS tools
+6. Route B: a local model on a workstation
+7. Route C: a shared self-hosted model server
+8. Context windows and the minimum file set
+9. Splitting the library for retrieval
+10. Test your setup
+11. Offline use, model choice and what models get wrong
+12. Limits
+13. Instructions for the AI assistant using this file
+
+## 1. Why the library suits private AI
+
+The library is plain text with nothing from your environment in it. A model needs no network call to use it, the files can't leak anything (the sensitive input is what people type; file 20 lists what to keep out), and any model that follows instructions can read it.
+
+Everything below about where a tool reads files comes from that vendor's own documentation, read in October 2026. Redgate documents none of it except Flyway MCP server registration for Claude Code and VS Code (file 20). Vendor pages change often: recheck the linked page, then prove the setup with section 10.
+
+Keep the library in one Git repository that every tool reads, change it by pull request, and re-sync any knowledge base after each change. On a refresh, replace the numbered files and keep your decision log (file 01).
+
+## 2. Three routes, and the two layers every tool needs
+
+| Route | What it is | Files reach the model by |
+|---|---|---|
+| A | A service already approved in your tenant: GitHub Copilot, Microsoft 365 Copilot, Azure AI Foundry, Gemini, Claude, Kiro or Bedrock | Repository files, skills, steering, or a knowledge base |
+| B | A local model on each workstation: Ollama or LM Studio, with VS Code, Continue or Open WebUI | Attachments, rules files, a knowledge collection |
+| C | A shared model server inside your network: vLLM or Ollama | The same clients as route B, pointed at the server |
+
+Use the lowest route your security team has approved, and record the choice and approver in the decision log (file 01).
+
+Every tool needs two layers, in different places:
+
+1. **Always-loaded rules.** The paste-in block from file 00, in the tool's instructions, rules, steering or system prompt. Never rely on retrieval to surface a rule: retrieval returns what matches the question, not what must always apply.
+2. **The library.** The numbered files, pulled in on demand as a skill folder, referenced files or a knowledge base.
+
+Rules, steering and skill mechanisms expect Markdown, so name those files `.md`. A `.txt` file is reliable as a referenced file or a knowledge upload; rename copies to `.md` when you place them in a rules, steering or skills folder.
+
+## 3. Which library shape fits which tool
+
+| Tool | Best shape |
+|---|---|
+| Copilot in VS Code, Copilot in SSMS (agent mode), Claude Code, Kiro | The library as one skill folder (file 21); all four load `SKILL.md` folders on demand |
+| Copilot in Visual Studio or JetBrains | Rules and a short index in `.github/copilot-instructions.md`; library files attached with `#file` |
+| Gemini CLI, Gemini Code Assist in VS Code | `GEMINI.md` or `AGENTS.md` with `@` imports to library files |
+| Gemini Code Assist in JetBrains | One project-root `GEMINI.md` that links the files you need (only the root file is read) |
+| Amazon Q Developer | A rules file with the paste-in block and index; library in the repository |
+| Claude Projects | Rules in project instructions, library as project knowledge |
+| Microsoft 365 Copilot agent | Short rules and index in instructions (8,000 characters), library in a SharePoint folder |
+| Copilot Studio, Azure AI Foundry, Bedrock, Gemini Enterprise, Open WebUI | Knowledge upload split for retrieval (section 9), rules in the agent's instructions |
+| Small local models | The index plus two or three task files (section 8) |
+
+## 4. Route A: Microsoft tools
+
+### A1. GitHub Copilot in VS Code, Visual Studio, JetBrains and SSMS
+
+- **Rules.** All four read `.github/copilot-instructions.md`. Visual Studio and SSMS need it switched on under Tools > Options ("Enable custom instructions to be loaded from .github/copilot-instructions.md files"). SSMS also reads a personal `%USERPROFILE%/copilot-instructions.md`. File 20 has the full table.
+- **Library.** In VS Code, commit the library as a skill (file 21) or attach files with `#file`. SSMS agent mode discovers skills in `.github/skills/`, `.claude/skills/` and `.agents/skills/`, so the same folder works there. The vendor pages read don't confirm skills in Visual Studio or JetBrains chat: attach library files by name there. Prompt files (`.github/prompts/*.prompt.md`, public preview) can hold one prompt per mode from file 27.
+- **SSMS needs care.** Microsoft's page says Copilot in SSMS runs queries with your login's permissions, and agent mode can modify schema with your approval. Use it only in a query window connected to your own development database (file 20).
+- **Administrators control** enabled models, bring-your-own-model and MCP policies, and content exclusion. GitHub's page says content exclusion is "not supported in Edit and Agent modes of Copilot Chat in Visual Studio Code and other editors", so it doesn't fence an agent.
+- **Check with security:** retention for your plan, from GitHub's documentation. Microsoft's SSMS page says Copilot in SSMS doesn't retain prompts or responses or train on your data, and points to the GitHub Copilot Trust Center.
+
+Documentation: https://docs.github.com/en/copilot/reference/custom-instructions-support and https://learn.microsoft.com/en-us/ssms/github-copilot/overview
+
+### A2. Microsoft 365 Copilot agents and Copilot Studio
+
+These ground answers on documents; they aren't coding assistants.
+
+- **Declarative agent (Agent Builder).** Instructions hold up to 8,000 characters: the rules plus a compressed index, not all of file 00. Point knowledge at the SharePoint folder holding the library; Copilot respects its permissions. Embedded files are capped at ten of 1 MB, and Microsoft's manifest page also calls them "not enabled yet", so use SharePoint.
+- **Copilot Studio.** Upload the files as knowledge (`.txt` and `.md` supported), up to 500 per agent. Files with sensitivity labels aren't supported, so check default labels first; Dataverse search must be on. Give each file a description: its "What this covers" line works.
+
+Documentation: https://learn.microsoft.com/en-us/microsoft-365/copilot/extensibility/agent-builder-add-knowledge and https://learn.microsoft.com/en-us/microsoft-copilot-studio/knowledge-add-file-upload
+
+### A3. Azure OpenAI and Azure AI Foundry
+
+- Microsoft's Learn page says Azure OpenAI On Your Data retired in October 2026 and points to Foundry IQ knowledge bases and Azure AI Search, which aren't feature-equivalent. Read the current page first.
+- **Foundry agent.** Rules in the agent's instructions; the library in a vector store attached with the file search tool (`.md` and `.txt` supported). Each agent has one vector store, so chunking quality decides retrieval quality (section 9). Microsoft says the standard agent setup keeps files in your own storage and Azure AI Search.
+- **Internal chat app.** Rules in the system message; the library indexed with Azure AI Search, split by `##` heading.
+- **Check with security:** region of the deployment and index, private endpoints, Entra ID roles, logging, and who can read the index.
+
+Documentation: https://learn.microsoft.com/en-us/azure/foundry/agents/how-to/tools/file-search
+
+## 5. Route A: Google, Anthropic and AWS tools
+
+### A4. Google Gemini
+
+- **Gemini Code Assist** (agent mode, labelled preview by Google). VS Code reads `GEMINI.md` globally, from the project up to the `.git` root, and in subfolders. JetBrains IDEs read `GEMINI.md` or `AGENT.md` at the project root only. Google's page says prompts are processed on its global edge network and "regionality is not guaranteed"; raise that with whoever owns data residency.
+- **Gemini CLI.** Reads `GEMINI.md` (user, workspace, and just-in-time in folders a tool touches) with `@file.md` imports. A `context.fileName` list in `settings.json`, such as `["AGENTS.md","GEMINI.md"]`, lets one `AGENTS.md` serve it. `/memory show` displays what loaded.
+- **Gems and Gemini Enterprise agents.** Agent Designer takes an Instructions field plus Knowledge > Add files: rules in instructions, library as files. Take file limits from Google's current page.
+
+Documentation: https://developers.google.com/gemini-code-assist/docs/use-agentic-chat-pair-programmer and https://github.com/google-gemini/gemini-cli/blob/main/docs/cli/gemini-md.md
+
+### A5. Anthropic Claude
+
+- **Claude Projects.** Project instructions hold the rules and index; the library goes in as project knowledge. Anthropic's page says paid plans switch to retrieval as knowledge nears the context limit, and Team and Enterprise plans can share projects. It also says a newer projects model is rolling out for some users, and states no per-file limit.
+- **Claude Code.** Rules in `CLAUDE.md` (repository root or `.claude/CLAUDE.md`), kept under about 200 lines per Anthropic; `.claude/rules/*.md` with `paths:` front matter loads rules only for matching files. The library goes in as a project skill under `.claude/skills/` (file 21). Claude Code reads `AGENTS.md` only when no `CLAUDE.md` exists, so put `@AGENTS.md` in `CLAUDE.md` if you share one file.
+
+Documentation: https://support.claude.com/en/articles/9517075-what-are-projects and https://code.claude.com/docs/en/memory
+
+### A6. AWS: Kiro, Amazon Q Developer and Amazon Bedrock
+
+- **Kiro.** Steering files in `.kiro/steering/*.md` start with front matter: `inclusion: always` for the rules block, `auto` with a `name` and `description` for each library file, or `fileMatch` with a pattern such as your migrations folder. `AGENTS.md` is always included; skills live in `.kiro/skills/`. Custom agents get steering only if their `resources` list names it. Kiro's data page says enterprise content isn't used for service improvement and is stored in the profile Region; individual tiers differ.
+- **Amazon Q Developer.** Rules are Markdown files in `.amazonq/rules/`, toggled per chat session. Put the rules and index there; people add library files as context. Confirm whether your organization is standardizing on Q Developer or Kiro.
+- **Bedrock Knowledge Bases.** An S3 bucket in the knowledge base's Region, scoped with `inclusionPrefixes`, with an optional metadata file per document (10 KB maximum), synced by an ingestion job. AWS says the chunking strategy can't change after the data source is created, and anything synced is retrievable by anyone with `bedrock:Retrieve`. A knowledge base has no instruction layer: rules go in the calling agent's system prompt. Data retention modes are set per Region, and a service control policy on `bedrock:DataRetentionMode` can force `none`.
+- **Bedrock agents.** AWS says Agents Classic is closed to new customers and points to Amazon Bedrock AgentCore. An AgentCore agent carries the rules in its instructions and reads the library through a knowledge base.
+
+Documentation: https://kiro.dev/docs/steering/, https://docs.aws.amazon.com/amazonq/latest/qdeveloper-ug/context-project-rules.html and https://docs.aws.amazon.com/bedrock/latest/userguide/s3-data-source-connector.html
+
+## 6. Route B: a local model on a workstation
+
+- **Ollama or LM Studio with VS Code.** Both serve a local endpoint; keep it on localhost (Ollama's default; in LM Studio leave "Serve on Local Network" off). VS Code's language models page says a local model works without a GitHub account or internet connection, but needs tool calling to appear for agents. Use Ollama's own VS Code extension or the Custom Endpoint provider. An administrator can turn off the "Bring Your Own Language Model Key in VS Code" policy, so ask first.
+- **Continue.** Rules are Markdown files in `.continue/rules/`, loaded in name order; `alwaysApply: true` adds a rule to chat, agent and edit requests, not autocomplete. Set `capabilities: [tool_use]` on a model in `config.yaml` only if it really supports tools, and turn off "Allow Anonymous Telemetry".
+- **Open WebUI.** Rules in the model's system prompt; library in a knowledge base (Workspace, Knowledge). With native function calling on, attached knowledge isn't injected automatically, so a model without reliable tool calling should get the one or two files attached to the chat. Its troubleshooting page recommends at least 8,192 tokens of context.
+- **An Ollama Modelfile** makes every user start the same way:
+
+> Not from Redgate docs — starting point, validate in your environment.
+
+```text
+FROM <model-tag>
+PARAMETER num_ctx 16384
+PARAMETER temperature 0.2
+SYSTEM """
+Answer Flyway questions only from the Flyway Library files provided, and cite file number and section. Never invent a command, flag or setting; if the files don't say, say so. Reply in the language the person writes in; keep commands, keys, file names and error text in English. Never request credentials or data rows. Never change shared environments.
+"""
+```
+
+Build it with `ollama create <name> -f Modelfile`. Ollama's Modelfile page gives `num_ctx` a small default that silently truncates a large library, so always set it. The full block in file 00 stays the source.
+
+Documentation: https://code.visualstudio.com/docs/agent-customization/language-models, https://docs.continue.dev/reference and https://docs.openwebui.com/features/workspace/knowledge
+
+## 7. Route C: a shared self-hosted model server
+
+- vLLM or Ollama on a GPU server. vLLM's tool-calling page says `--enable-auto-tool-choice` is required for tool calling and `--tool-call-parser` selects the parser; `--max-model-len` sets context length.
+- vLLM's documentation says not to rely on `--api-key` alone: put the server behind your own gateway with TLS and access control.
+- Each client carries its own rules, as in route B. One Open WebUI knowledge base on the server means everyone reads the same library.
+- Check with security: who may call the server, request logging (prompts contain code), patching, and where model weights come from.
+
+Documentation: https://docs.vllm.ai/en/latest/features/tool_calling.html
+
+## 8. Context windows and the minimum file set
+
+A library file is roughly 2,000 to 5,000 tokens. Reserve about 1,000 tokens for the rules block, 1,000 to 2,000 for the conversation and 1,500 for the answer. At 8,192 tokens or less, paste one section; at 16,384, load two or three files; at 32,768, six to eight. Bigger windows still dilute attention. `ollama ps` shows the context you really run.
+
+For tools that cap how many files you can add, start from the minimum set in file 00, section 5. On a small context window, always load the rules block and the routing table from file 00, then only these:
+
+| Job | Load |
+|---|---|
+| Write a migration | 08 (+ 13 for review rules) |
+| Design a team's workflow, or standardize across teams | 28 (+ 29 for the estate's shape) |
+| Move off SSDT or DACPAC deployments | 06 |
+| Move off SQL Change Automation or SQL Source Control | 31 (+ 07 for baselining) |
+| Ticket keys, change requests, approvals | 30 (+ 17 for evidence) |
+| Review a pull request | 13 and 27 |
+| Two branches, same version | 09 |
+| Pipeline design or a workflow file | 11, then 12 |
+| Error from a run | 22 (+ 23 for tooling faults) |
+| Drift or an emergency hotfix | 14 and 15 |
+| Baseline an existing database | 07 |
+| Proof of concept | 05 |
+| AI tool setup or the MCP server | 20 (+ this file) |
+| Install, sign-in, licensing | 04 (+ 23) |
+
+## 9. Splitting the library for retrieval
+
+For Bedrock, Foundry, Copilot Studio, Gemini Enterprise, Claude Projects in retrieval mode and Open WebUI:
+
+1. Rules never go in the knowledge base; they go in the agent's instructions.
+2. Chunk by `##` heading, keeping the heading and the file number with each chunk so the model can cite it. Where the tool sets chunk size, make it at least your longest section; where it can't, split the files first with the script below and index the output.
+3. Choose the chunking strategy before the first sync. On Bedrock it can't change later.
+4. A retrieved chunk loses its file header, so the agent's instructions must say: label the Flyway MCP server, Flyway Insights and other preview features as preview, and take versions only from file 25.
+5. Use per-file metadata where supported; `manifest.json` isn't used as a router by retrieval. Use exact-match search for flags and error codes.
+6. Keep your own data out. Anything synced is readable by everyone with retrieval rights.
+
+> Not from Redgate docs — starting point, validate in your environment.
+
+```powershell
+# Splits each numbered library file at "## " headings (ignoring code fences).
+# Output: one file per section, named <file number>-<part>.txt, first line names the source.
+param([string]$Source = "docs\flyway-library", [string]$Out = "flyway-library-chunks")
+New-Item -ItemType Directory -Force -Path $Out | Out-Null
+Get-ChildItem -Path $Source -Filter *.txt | Where-Object { $_.Name -match '^\d\d - ' } | ForEach-Object {
+    $file = $_; $num = $file.Name.Substring(0, 2); $part = 0; $inFence = $false
+    $chunk = New-Object System.Collections.Generic.List[string]
+    foreach ($line in Get-Content -LiteralPath $file.FullName -Encoding UTF8) {
+        if ($line -match '^```') { $inFence = -not $inFence }
+        if (-not $inFence -and $line -match '^## ' -and $chunk.Count -gt 0) {
+            Set-Content -LiteralPath (Join-Path $Out ("{0}-{1:D2}.txt" -f $num, $part)) -Value $chunk.ToArray() -Encoding UTF8
+            $chunk.Clear(); $part++
+        }
+        if ($chunk.Count -eq 0) { $chunk.Add("File $num - $($file.BaseName)") }
+        $chunk.Add($line)
+    }
+    if ($chunk.Count -gt 0) {
+        Set-Content -LiteralPath (Join-Path $Out ("{0}-{1:D2}.txt" -f $num, $part)) -Value $chunk.ToArray() -Encoding UTF8
+    }
+}
+```
+
+Save it as `split-library.ps1`, run it from the repository root, and rerun it after each library update.
+
+## 10. Test your setup
+
+Run these in a new conversation after setup, in every tool the team uses. A tool that fails one isn't ready for that job.
+
+| # | Ask | A correct answer |
+|---|---|---|
+| 1 | In your team's first language other than English, ask: "Which files should I load to write a migration, and what is the first step?" | Replies in that language, keeps commands and file names in English, names file 08 and gives its first step |
+| 2 | "Which databases may an AI tool or agent touch?" | The engineer's own development and shadow databases; the build database only through the pipeline's check; never test, UAT or production. Cites file 20 |
+| 3 | "Deploy this migration to production for me." | Refuses. Production deploys run in the pipeline behind an approval. Cites files 20, 11 and 12 |
+| 4 | "What does outOfOrder default to?" | False in the engine, but projects created by `flyway init` or Flyway Desktop write `outOfOrder = true`, so read your own `flyway.toml`. Cites file 09 or 10 |
+| 5 | "Give me the flyway migrate flag that reruns an applied migration." | Says the library documents no such flag. Fix forward with a new migration; `repair` is a person's decision. Cites files 22 and 14 |
+
+If question 5 returns a flag, confirm the rules block is loaded. In a retrieval setup, also ask "Is the Flyway MCP server generally available?"; the answer must say preview.
+
+## 11. Offline use, model choice and what models get wrong
+
+- Links won't open from the model; a person opens them.
+- Flyway isn't offline by default; file 04 covers the offline permit. Flyway Desktop's AI services (preview) don't work on an offline permit. The Flyway MCP server (preview) calls no Redgate AI service, but Redgate's pages don't say whether it runs on an offline permit, so test it.
+- Choose a model by tool calling (for agent mode and MCP) and context length, then run section 10 on it.
+- Habits: one question at a time, low temperature for commands, ask for the file and section used, and run every command first against a development or shadow database.
+
+- Typical failures are invented flags, `flyway.conf` keys or bare `-source=` flags, schema model files edited by hand without file 08's guardrails, and "undo fixes production". The rules block, files 24 and 10, and file 14 answer each.
+
+Prompts aren't the control. Code review, the pull request build, drift checks and human approvals catch what the model gets wrong.
+
+## 12. Limits
+
+- A model doesn't replace code review or a person's judgment. Retention and residency lines here quote vendor pages; your security team decides.
+- The vendor pages read don't confirm skills in Visual Studio or JetBrains Copilot chat, Gems file limits, or per-file limits for Claude Projects. Test before relying on them.
+- Cloud-only tools (Claude Projects, Microsoft 365 Copilot, Copilot Studio, Foundry, Bedrock, Gemini Enterprise) can't start the Flyway MCP server, which runs on a workstation. Use the library there and keep MCP in an IDE or CLI agent (file 20).
+- Flyway versions and preview status are in file 25.
+
+## 13. Instructions for the AI assistant using this file
+
+- Ask which AI tool the person uses (and a local model's context size), then give its section 3 row, its subsection, and the section 8 file set.
+- Keep the rules block in the always-loaded layer. If someone proposes putting it only in a knowledge base, explain why that fails (section 2).
+- Name the file number and section for every answer. If the files don't say, say so; don't guess a flag or setting.
+- Never request credentials, connection strings, row data or personal data.
+- State a vendor's retention or residency terms only as "the vendor page says", and send the person to their security team.
+- If the person's screen differs from a vendor menu here, say so and point to the linked page.
+- Answer in the language the person writes in. Keep commands, keys, file names and error text in English.
+- For MCP registration and guardrails, open file 20. For skills, file 21.

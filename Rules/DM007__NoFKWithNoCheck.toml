@@ -1,0 +1,5 @@
+code = "DM007"
+dialects = ["TEXT"]
+rules = ["(?i)WITH\\s+NOCHECK"]
+description = "WITH NOCHECK bypasses constraint validation and is not permitted - existing data must satisfy FK constraints"
+severity = "error"

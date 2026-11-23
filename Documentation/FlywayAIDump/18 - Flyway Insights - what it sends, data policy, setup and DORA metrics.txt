@@ -1,0 +1,252 @@
+Flyway Enterprise AI library - file 18 of 32
+Flyway Insights - what it sends, data policy, setup and DORA metrics
+Flyway reference library, October 2026. Generic guidance written for your AI assistant. It contains no data from your environment, and you shouldn't add any to these files.
+
+What this covers: Flyway Insights (preview), Redgate's hosted service that shows your deployment and drift check results as deployment history, drift status, delivery metrics and a business value estimate. In this file DORA means DevOps Research and Assessment delivery metrics, not the EU Digital Operational Resilience Act (section 2). The data policy comes first, because for a regulated financial institution it goes to security review before anything is enabled. Then setup from Flyway Desktop and GitHub Actions, how to keep publishing off by default and turn it on only for the environments you choose, what each page shows, how each metric is calculated, sharing, a rollout order that starts with one proof-of-concept project, and what to do if you decide not to use it.
+
+Not in this file: drift detection (file 14), pipeline construction (files 11 and 12), audit evidence you keep yourself (file 17), proof-of-concept planning (file 05). Nothing else in this library depends on Flyway Insights.
+
+Contents:
+1. What Flyway Insights is
+2. Two meanings of DORA
+3. Read this first: what is sent, where it goes, who sees it
+4. Questions for your security review
+5. Setup from Flyway Desktop
+6. Setup from a GitHub Actions pipeline
+7. Publish only the environments you choose
+8. What you see
+9. How each metric is calculated
+10. Sharing with your organization
+11. Rollout order
+12. If you decide not to use it
+13. In daily use
+14. Limits
+15. Instructions for the AI assistant using this file
+
+## 1. What Flyway Insights is
+
+PREVIEW: Redgate's documentation says "Flyway Insights is in public preview for Flyway Enterprise users. Features may change before general availability."
+
+The preview covers all of Flyway Insights: the Deployments, Drift, Deployment metrics (DORA) and Business value (ROI) pages, not just one view.
+
+It is a Redgate-hosted website at `https://flyway.red-gate.com`, signed into with a Redgate ID. When publishing is on for a project, Flyway sends the result of each `migrate`, `deploy` (from engine 13.6.0) and `flyway check -drift`. You then see what was deployed, when and where, without connecting to each environment. It was previously called Flyway Pipelines. The publishing setting is still `publishResult`, and some pages still use the old name. You can explore sample data before publishing anything.
+
+Documentation: https://documentation.red-gate.com/fd/flyway-insights-367919120.html
+
+## 2. Two meanings of DORA
+
+In this file, DORA means DevOps Research and Assessment, a research program that defines software delivery metrics. It doesn't mean the EU Digital Operational Resilience Act. Flyway Insights' "DORA metrics" page measures deployment speed and stability. It isn't a compliance report for the regulation. For change-control evidence under ICT regulation, see file 17. Keep the two apart in conversations, tickets and slides.
+
+## 3. Read this first: what is sent, where it goes, who sees it
+
+Share this section and Redgate's "Security, hosting, and data" page with your security and data protection teams before enabling publishing: https://documentation.red-gate.com/fd/security-hosting-and-data-254148708.html
+
+Hosting, as the Security page states it (page last updated 1 October 2026, read on 19 October 2026): Flyway Insights is run by Redgate on Amazon Web Services in the eu-west-1 (Ireland) region, at `https://flyway.red-gate.com`, with data stored in an encrypted managed database in that region. Connections use HTTPS with TLS 1.2 or later, and the database and its backups are encrypted at rest. Users sign in with a Redgate ID that has a verified email address; pipelines authenticate with a personal access token. Subprocessors are listed at https://www.red-gate.com/trust/saas-subprocessors/. Use falls under Schedule 2 of Redgate's Master Subscription EULA. The page also says Redgate may collect data about how you use Flyway Insights, on the basis of legitimate interests. The page describes no choice of region and no self-hosted option. Re-read it before your security review, because hosting statements can change.
+
+Redgate's page says: "Flyway only sends data if you turn publishing on, which can be set for each Flyway Project." and "Flyway never sends any data in your tables or the contents of your migration scripts."
+
+| What | When | Contents |
+|---|---|---|
+| Deployment results | After each `migrate` or `deploy` | Project ID and name, pipeline ID, environment name, database type, database and schema name, time, success or failure. For each script: filename, version, description, type, status, execution time, whether it was rolled back |
+| Drift results | After every `flyway check -drift` (from engine 13.8.0, any drift check, not only checks against an Insights snapshot) | Whether drift was found. For each drifted object: type, schema, name, and its definition (DDL) as expected and as found. Objects that haven't drifted aren't sent |
+| Every request | Each time | The Flyway version and the kind of environment Flyway runs in, for example a CI system |
+
+Points that need a decision, not just a read:
+
+- Drift results include DDL. There's no setting to send only a count of drifted objects. Redgate's page asks teams for whom this blocks adoption to contact its development team.
+- Filenames, descriptions, and database, schema and environment names are sent. Keep descriptions free of customer values (file 17).
+- Who sees what: published deployments are visible to you and, once shared, to everyone in your Redgate organization (section 10). Redgate's two pages still disagree about drift: the security page says drift report details are visible only to you, and the sharing page lists drift alerts and details as shared. Assume the wider reading until you've confirmed it in a trial.
+- Retention: no page states how long data is kept. Don't treat Flyway Insights as your system of record.
+- Deleting: the owning Redgate ID can delete a pipeline from the card menu. Redgate Support can delete data or provide a copy.
+- Network: whatever runs Flyway needs outbound HTTPS (443) to `flyway.red-gate.com` and `identityprovider.red-gate.com`. From engine 13.9.0, Flyway ignores the operating system proxy unless `FLYWAY_USE_SYSTEM_PROXIES=true`. On Linux runners and the Docker image, set the proxy in `JAVA_ARGS` (file 23).
+- Never enable `checkDriftOnMigrate`. The Security page lists it as the one setting that uploads a snapshot of the target's whole schema (object definitions, not data) after each migrate, and the engine release notes deprecate it from 13.10.0, with a warning when used.
+
+## 4. Questions for your security review
+
+Record the answers in your decision log (file 01).
+
+1. Is a Redgate-hosted service in the EU acceptable for deployment metadata about these databases?
+2. Are database, schema and environment names, and migration filenames and descriptions, acceptable to send?
+3. Is the DDL of drifted objects acceptable? If not, run drift checks without publishing, or don't adopt Insights.
+4. Who in your Redgate organization would see shared deployments and possibly drift details?
+5. Is an unstated retention period acceptable for a secondary view?
+6. Which Redgate ID publishes, and who owns it?
+7. Will the network team allow egress from the runners to both hosts?
+
+If any answer is no, read section 12.
+
+## 5. Setup from Flyway Desktop
+
+Prerequisites: a Flyway Enterprise license, the Redgate edition of the CLI or Docker image (the open-source edition doesn't recognise `publishResult` from engine 13.2.0, so it doesn't publish), online authentication with that license (a personal access token in pipelines, `flyway auth` or Desktop sign-in on a workstation), Flyway Desktop 9.10.2 or later if you configure from Desktop, a `flyway.toml` project, and a Redgate ID in your Redgate organization. Earlier Desktop versions honour `publishResult` but can't set it.
+
+Publishing is a project setting in `flyway.toml`, so it applies to everyone using the project and to the pipeline once committed.
+
+- From the prompt: open the project's Deploy or Automate deployment page, then select Enable tracking under "Track this project with Flyway Insights".
+- From project settings: select the cog (Configure project settings), then on the General tab, under Flyway Insights, select "Track this project's deployments in Flyway Insights" and Save.
+
+Either sets this in `flyway.toml`:
+
+```toml
+[flyway]
+publishResult = true
+```
+
+If you didn't create the project with Desktop or `flyway init`, the top of `flyway.toml` also needs `databaseType`, `id` (a new GUID) and `name`. Running `flyway init` writes them.
+
+Leave each developer's database out of the metrics:
+
+```toml
+[environments.development.flyway]
+publishResult = false
+```
+
+Both snippets are from Redgate's "Get started with Flyway Insights" page: https://documentation.red-gate.com/fd/get-started-with-flyway-insights-367919194.html. Commit and push `flyway.toml`. That page also says manual deployments from Flyway Desktop aren't published out of the box, which doesn't matter when you deploy through the pipeline. Redgate's older `publishResult` setting page says Desktop can't configure it. Follow the Get started page.
+
+## 6. Setup from a GitHub Actions pipeline
+
+1. Create a personal access token at https://identityprovider.red-gate.com/personaltokens, signed in with the Redgate ID you want deployments recorded under. Use a dedicated pipeline account, not a person, and put it in your Redgate organization.
+2. Store `FLYWAY_EMAIL` (the email linked to the token) and `FLYWAY_TOKEN` as GitHub secrets. Every Flyway job already needs them to license the command line (file 12), so they don't by themselves decide what publishes.
+3. Turn publishing on for the environments you've agreed. The recommended way is per-environment tables in `flyway.toml` (section 7). The alternatives switch the whole run: `publishResult = true` at the root, the variable `FLYWAY_PUBLISH_RESULT=true`, or `-publishResult=true` on the command line. The variable lets you choose which jobs publish without changing the committed project:
+
+> Not from Redgate docs — starting point, validate in your environment.
+
+```yaml
+# After red-gate/setup-flyway has installed and licensed the CLI (file 12)
+- uses: red-gate/flyway-actions/migrations/deploy@v2
+  env:
+    FLYWAY_EMAIL: ${{ secrets.FLYWAY_EMAIL }}
+    FLYWAY_TOKEN: ${{ secrets.FLYWAY_TOKEN }}
+    FLYWAY_PUBLISH_RESULT: 'true'
+  with:
+    target-environment: uat
+    working-directory: <project-folder>
+    baseline-on-migrate: 'false'   # the action defaults to 'true'; see file 12
+```
+
+Set the same variable on the drift-check step only if you've agreed to publish drift results. Dry runs aren't published (from engine 13.7.0), so a preview never counts as a deployment. In Insights, Deployments then Add pipeline walks through the same steps.
+
+Settings at a glance:
+
+| Setting | Environment variable | Notes |
+|---|---|---|
+| `publishResult` (`[flyway]`, or `-publishResult=true`) | `FLYWAY_PUBLISH_RESULT` | Default `false`. Turns publishing on |
+| `pipelineId` (`[flyway]`, or `-pipelineId=`) | `FLYWAY_PIPELINE_ID` | Optional, no default. Tells Flyway which pipeline in Insights to send results to; copy the ID from Insights. Redgate's Pipeline Id setting page places it under `[flyway]` and says Desktop honors it but can't set it |
+| `checkDriftOnMigrate` | not needed | Deprecated from engine 13.10.0. Never enable |
+| `flywayServicePublish.publishReport` | not needed | Deprecated from engine 13.10.0 (engine release notes). Remove it if you find it |
+
+Both settings pages still use the old name, Flyway Pipelines.
+
+## 7. Publish only the environments you choose
+
+The safest pattern for a security review: nothing publishes unless you've named the environment. Publishing is already off by default; write that at the root so the intent is reviewable, then switch it on per environment:
+
+> Not from Redgate docs — starting point, validate in your environment.
+
+```toml
+[flyway]
+publishResult = false
+
+[environments.production.flyway]
+publishResult = true
+```
+
+- **Form.** `[environments.<name>.flyway]` is the sub-table Redgate documents for per-environment overrides (file 10, section 10), and the Get started page uses it to turn one environment off. Write that form. Don't also give the same environment a dotted `flyway.publishResult` key under `[environments.<name>]`; TOML rejects a table defined twice.
+- **One run.** The command-line form is `-environments.<name>.flyway.publishResult=true` or `=false`. Redgate's Environments Namespace page also documents an environment-variable form for nested environment settings, which here would be `environments_<name>_flyway_publishResult`; prove it with `-X` before a job relies on it.
+- **Engine floor.** Per-environment overrides of settings outside the core set arrived in engine 13.10.0, and Redgate supports this pattern on engines later than 13.10.0. Pin an engine later than 13.10.0 and prove it on your pinned version. A fix in engine 13.7.0 stopped drift results publishing when `publishResult` was false, so never run below that floor if "off" has to mean off.
+- **Prove it.** In the proof of concept, migrate an environment that's left off and confirm nothing appears in Insights, then one that's on and confirm it does. Run each once with `-X` to see the resolved value. Repeat after every engine upgrade.
+- **Drift comes with it.** Every `migrate`, `deploy` and drift check against a publishing environment is sent. Turning `production` on also publishes its drift results, with DDL: the nightly drift check and the drift gate before each deployment (file 12). Redgate's deploy action runs that gate and `migrate` in one step with the same arguments, so you can't publish one without the other there. If drift publishing isn't agreed (section 4, question 3), keep that environment off, or run the drift check as its own CLI step with `-environments.production.flyway.publishResult=false` and prove nothing appears.
+
+How this interacts with Flyway Desktop's tracking toggle (section 5): Redgate describes the toggle as writing the root `[flyway] publishResult`. Selecting it sets the root to `true`, which publishes every environment you haven't turned off, the opposite default. Once a project uses per-environment tables, change publishing only by pull request in `flyway.toml`, and treat a changed root value in a diff as a toggle someone selected. Desktop's documented pattern (root on, development off) suits a project where nearly every environment should publish.
+
+How it interacts with pipelines (section 6): command-line parameters beat environment variables, which beat configuration files. A job-level `FLYWAY_PUBLISH_RESULT` or `-publishResult` sets the root value for that run, and Redgate doesn't document how it combines with a per-environment table. Pick one mechanism per project: per-environment tables in `flyway.toml` (reviewable, recommended) or job-level variables with no `publishResult` in the file. If you must mix them, prove the result. Use the same environment names in every project so the Insights Environments filter works across them.
+
+## 8. What you see
+
+| Page | Shows |
+|---|---|
+| Deployments | Each project with its latest status: Deploy Succeeded, Deploy Failed or Drift Detected. Per environment: every deployment with status, time and duration, the script names applied, and drift checks. Hide No-Op hides migrate runs that applied nothing. Migrations-based deployments only: Redgate's Deployments page says "only migrations-based deployments are shown on this page" |
+| Drift | Investigate opens a report with the expected and actual definition of each drifted object. Statuses: Passed, Alert unresolved, Alert resolved. Mark as resolved records that someone dealt with it, for example by adding the hotfix to your migrations |
+| Deployment metrics | Five delivery metrics across all pipelines or per pipeline, with trends. Export to PDF |
+| Business value (ROI) | A prediction from your inputs, then measured savings after 90 days of data. Redgate states these are estimates. Your inputs stay private |
+
+## 9. How each metric is calculated
+
+| Metric | How Flyway Insights calculates it |
+|---|---|
+| Deployment frequency | Deployments in each window. Migrate runs that applied no migrations aren't counted |
+| Lead time | Mean days between the timestamp in a script's filename and its successful deployment |
+| Mean time to recovery | Mean days between a failed deployment and the next successful deployment |
+| Change failure rate | Failed deployments as a percentage of all deployments in each window |
+| Rework rate | Successful deployments that followed a failed deployment, as a percentage of all successful deployments |
+
+What counts:
+
+- Every published `migrate` and `deploy` counts, success or failure. A no-op migrate and a dry run don't.
+- A failure is a deployment Flyway reports as failed. Drift isn't a failure. A deployment that succeeds and later causes a production problem isn't detected, so change failure rate understates incidents. Your incident log and monitoring (file 19) fill that gap.
+- Lead time needs a UTC timestamp in `yyyyMMddHHmmss` format after the version, for example `V1_20260928143000__<ticket-key>_add_customer_table.sql`. Desktop names scripts like this by default, and `flyway add` with `-add.timestamp=true` can add one. Scripts without a timestamp, and state-based deployments, aren't included in lead time. Generated timestamps are UTC from engine 13.7.0, which matters to teams working across time zones.
+- Lead time starts at the filename timestamp, not when work started or the commit was made. Recovery time is days to the next successful deployment, not time to restore service. These are narrower than the research program's own definitions, so don't set an Insights figure against a published performance band.
+- The Environments filter lets you count production only. Period (default 90 days) and window (default 30 days) each range from 1 to 365. Selections are personal and appear in the page address, so you can share a view.
+- State-based deployments count in the metrics but not on the Deployments page. Redgate's Deployments page (updated 1 October 2026) says "All deployments (state and migrations) are included in the DORA and ROI pages". Lead time is the exception: it excludes state-based deployments (DORA metrics page). Check in your trial before comparing state-based and migrations-based projects.
+
+Documentation: https://documentation.red-gate.com/fd/dora-metrics-368508949.html
+
+## 10. Sharing with your organization
+
+Sharing works through your Redgate organization, managed by your Redgate account administrator.
+
+- If you started with Flyway Insights recently, deployments are shared with your organization automatically. If you used Flyway Pipelines, you opt in with Share deployments.
+- Sharing can't be undone, and only later deployments are shared. You can see colleagues' shared deployments without sharing your own.
+- Redgate's sharing page lists as shared: pipelines and environments, deployment history and script names, drift alerts and details, DORA metrics and measured savings. Private: your ROI inputs.
+- The pipeline's Redgate ID must be in the organization, or its deployments won't appear for anyone else.
+- Agree organization membership before several teams publish. Everyone in it sees the shared data.
+
+Documentation: https://documentation.red-gate.com/fd/sharing-with-your-organization-368508948.html
+
+## 11. Rollout order
+
+Start with one proof-of-concept project, then expand.
+
+1. Sign-off on the questions in section 4, recorded in your decision log (file 01).
+2. Create the pipeline's Redgate ID, add it to your Redgate organization, and store its token as a GitHub secret.
+3. Confirm egress from the runners to both hosts.
+4. Publish from one proof-of-concept project, `test` only: root `publishResult = false` and `[environments.test.flyway] publishResult = true` (section 7). Prove `uat` and `production` publish nothing. Read exactly what appears, including a drift result from `test`.
+5. Decide drift publishing, having seen what a drift result contains. Then add `uat` for one release cycle.
+6. Add `production`, one release at a time, knowing its drift results publish too (section 7). Set the Environments filter to production for the metrics, and share that view.
+7. Expand to the next project or team. Use the same environment names in every project so the Environments filter works across them, and repeat steps 4 to 6 for each.
+
+At any step you can stop by setting the environment's table back to `false` or removing it. Nothing else in the pipeline depends on publishing.
+
+## 12. If you decide not to use it
+
+That's a supported choice. Leave `publishResult` unset or `false` and don't set `FLYWAY_PUBLISH_RESULT`. Remove the two deprecated settings if they appear. If something was published during a trial, delete the pipeline from its card, or ask Redgate Support to delete the data.
+
+Keep evidence in systems you control (file 17). For delivery metrics without a hosted service, the schema history table records when each migration was applied and GitHub records each deployment run, so a query over those gives deployment frequency and failure rate on your own definitions. Record the decision and reason in file 01.
+
+## 13. In daily use
+
+- "Is Insights on for this environment?" Check the root `publishResult` and the environment's `[environments.<name>.flyway]` table in `flyway.toml`, then `FLYWAY_PUBLISH_RESULT` and `-publishResult` in the workflow.
+- "Why is my deployment missing?" Publishing off for that run, the token not mapped, no outbound access, the open-source edition, or the pipeline's Redgate ID isn't in the organization.
+- "Why does Insights show nothing at all?" Two causes to rule out first. The run used the open-source edition, which ignores `publishResult` from engine 13.2.0; usually licensing didn't reach the runner, so check the edition with `flyway version` in that job (file 23, section 2). Or the project still uses a `.conf` file: Redgate's Pipelines quickstart says "The service does not work with older flyway.conf files." Convert it to `flyway.toml` (file 10).
+- "Why is lead time empty?" No timestamp in the filenames, or a state-based project.
+- "Show leadership our numbers." Filter to production and state the section 9 definitions beside the figures.
+
+## 14. Limits
+
+- Public preview, Redgate-hosted in the EU, with no self-hosted option described.
+- Drift results include DDL, with no count-only setting, and no retention period is stated.
+- The Deployments page shows migrations-based deployments only. The DORA and ROI pages include state-based deployments too, except lead time, which excludes them.
+- Manual deployments from Desktop aren't published out of the box.
+- Per-environment publishing depends on the engine (later than 13.10.0) and on one mechanism per project; prove it on your pinned version (section 7).
+- A deployment that succeeds but breaks production isn't counted as a failure.
+- Insights isn't a regulatory evidence tool (section 2, file 17).
+
+## 15. Instructions for the AI assistant using this file
+
+- Always say Flyway Insights is in preview and Redgate-hosted.
+- Before any setup step, ask whether the section 4 sign-off is recorded in your decision log (file 01). If not, start there.
+- If DORA comes up, make the section 2 distinction. Never present Insights metrics as evidence under the EU regulation.
+- Never put a real email or token in an example or a committed file.
+- Recommend one proof-of-concept project, non-production first. Never suggest `checkDriftOnMigrate`.
+- Default to publishing off at the root and on only in named `[environments.<name>.flyway]` tables. Say that drift results publish for those environments too, that the Desktop toggle rewrites the root value, and that the pattern needs proving on an engine later than 13.10.0.
+- If the team decides not to use it, give section 12 without arguing.
+- Don't describe future Insights features or dates.

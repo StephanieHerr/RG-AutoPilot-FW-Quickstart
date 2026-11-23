@@ -1,0 +1,41 @@
+// Flyway sandbox pipeline for Jenkins (Windows agent). The simplest version:
+//   1. Check:  a report built on the Check database: changes, drift on Test, code review, SQL to run.
+//   2. Deploy: applies pending migrations to Test and saves a snapshot for the next drift check.
+// Set up: pipelines/jenkins/README.md. Test and Check are environment names in flyway.toml.
+
+pipeline {
+   agent any
+
+   triggers {
+      pollSCM('H/5 * * * *') // looks for new commits every 5 minutes
+   }
+
+   environment {
+      // Jenkins credentials, kind "Secret text", with these IDs
+      FLYWAY_EMAIL = credentials('FLYWAY_EMAIL')
+      FLYWAY_TOKEN = credentials('FLYWAY_TOKEN') // a Redgate personal access token
+      // SQL or database login only: two more "Secret text" credentials
+      // TARGET_DATABASE_USERNAME = credentials('TARGET_DATABASE_USERNAME')
+      // TARGET_DATABASE_PASSWORD = credentials('TARGET_DATABASE_PASSWORD')
+   }
+
+   stages {
+      stage('Check') {
+         steps {
+            powershell 'flyway auth -IAgreeToTheEula "-email=$env:FLYWAY_EMAIL" "-token=$env:FLYWAY_TOKEN"'
+            powershell 'flyway check -dryrun -changes -drift -code -environment=Test "-user=$env:TARGET_DATABASE_USERNAME" "-password=$env:TARGET_DATABASE_PASSWORD" "-check.buildEnvironment=Check" "-environments.Check.user=$env:TARGET_DATABASE_USERNAME" "-environments.Check.password=$env:TARGET_DATABASE_PASSWORD" "-reportFilename=reports/Test-check.html"'
+         }
+         post {
+            always {
+               archiveArtifacts artifacts: 'reports/**', allowEmptyArchive: true
+            }
+         }
+      }
+
+      stage('Deploy to Test') {
+         steps {
+            powershell 'flyway info migrate info -environment=Test "-user=$env:TARGET_DATABASE_USERNAME" "-password=$env:TARGET_DATABASE_PASSWORD" "-migrate.saveSnapshot=true"'
+         }
+      }
+   }
+}

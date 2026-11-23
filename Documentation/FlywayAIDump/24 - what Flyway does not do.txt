@@ -1,0 +1,121 @@
+Flyway Enterprise AI library - file 24 of 32
+What Flyway does not do
+Flyway reference library, October 2026. Generic guidance written for your AI assistant. It contains no data from your environment, and you shouldn't add any to these files.
+
+What this covers: The file to check before answering "can it do X?" with a yes. Each limit is stated in the present tense, with what to do instead and the file that has the detail. It's written so a person can forward it on its own, for example to an architecture review or a security review.
+
+Not in this file: How the capabilities that exist work (file 00 routes you to them). Current versions and preview status (file 25). Runtime failures (file 22) and tooling problems (file 23).
+
+Contents:
+1. What Flyway isn't
+2. Data
+3. Teams, conflicts and ownership
+4. Deployment and rollback
+5. History and traceability
+6. Comparison and authoring
+7. AI, the MCP server and Insights
+8. Licensing
+9. In daily use
+10. Instructions for the AI assistant using this file
+
+## 1. What Flyway isn't
+
+- **Not ETL or a data pipeline.** Flyway versions and deploys schema changes and small reference-data changes. It doesn't move bulk data between systems.
+- **Not backup and restore.** Flyway takes no backup before it migrates. If you want one, script it into a callback or a pipeline step, and keep SQL Server backups and Azure SQL recovery as the data-recovery route.
+- **Not a monitoring tool.** It doesn't tell you whether a release slowed a server down. Redgate Monitor does that (file 19).
+- **Not a ticketing, approval or change-advisory system.** Flyway has no native Jira, ServiceNow, Azure Boards or GitHub Issues connector. The link is the ticket key carried through branch, commit, migration description and pull request, which each tracker's own GitHub integration reads, plus a pipeline step that gates on the approved change and attaches Flyway's reports. File 30 has the patterns. Flyway holds the change and its history.
+- **Not a test framework.** A green Flyway run proves scripts ran in order, not that they're correct or fast.
+- **Not a data masking tool.** See section 2.
+
+## 2. Data
+
+| Flyway doesn't | Do this instead | File |
+|---|---|---|
+| Mask or anonymize data. It applies migrations to whatever database it's pointed at and doesn't read, transform or de-identify rows | Produce anonymized copies with your own approved process, then point Flyway at the copy to apply migrations. Flyway can build a schema-only or reference-data-only database from source | 16 |
+| Generate test data | Load test data with your own approved tooling or scripts. Reference data that belongs in source control goes in as static data or a data migration | 16 |
+| Capture data in snapshots, or roll data back. Snapshots, undo scripts and snapshot-based rollback restore schema, not rows | Restore data from your platform's backups or point-in-time recovery, as a last resort a person decides | 14 |
+| Check reference-data drift. Redgate's static-data drift tutorial says "The current drift detection only checks for drift in schema objects" | Compare named reference tables with SQL Data Compare, report only, and commit any script as a migration. The same page says Flyway Enterprise comes with SQL Data Compare | 16, 19 |
+| Filter static data rows everywhere. `[[redgateCompare.staticDataTables]]` takes `excludedColumns` for columns and, on SQL Server only, `whereClause` for rows, but `whereClause` filters rows on live databases, not in the schema model | Set `whereClause` on the static data table for a subset of rows on SQL Server. If that doesn't fit, use a repeatable or versioned data migration, or a SQL Data Compare project | 07, 16, 19 |
+
+## 3. Teams, conflicts and ownership
+
+| Flyway doesn't | Do this instead | File |
+|---|---|---|
+| Resolve conflicts between teams automatically. Two migrations that touch the same object on two branches both apply, in version order, whether or not they make sense together. A duplicate or too-low version fails visibly; a logical clash doesn't | Keep branches short, check for collisions in the pull request, and for a real overlap describe the difference between branches, generate a first-cut merge migration and test it on disposable databases | 09 |
+| Know whose change is whose in a shared development database | Give each developer their own development database, or select only your own objects when you capture | 08, 09 |
+| Enforce schema ownership. Filters decide what Flyway compares, not who may change what | Use Git: CODEOWNERS on migration folders, branch protection and required reviewers. Keep ownership rules in the repository | 09, 12 |
+| Keep one history across several databases. Each database has its own schema history table | Run `info` per database and collect the output | 09 |
+| Run atomically across several databases or projects. Flyway is invoked once per target database, with no built-in command that deploys to many, and each database has its own transaction scope | Drive one invocation per database from a list or a pipeline matrix, in an order you choose, and plan compensating migrations. Don't design a release that needs all-or-nothing across databases | 09, 11 |
+| Preserve the "every database ran the same scripts in the same order" guarantee when `outOfOrder` is on. Two databases with the same migration set can end in different states | Prefer the strict stance (`outOfOrder` off on every shared environment); the permissive stance needs a build that tests both orders. Read your own `flyway.toml`: projects created by `flyway init` or Desktop can write `outOfOrder = true` | 09, 10 |
+
+## 4. Deployment and rollback
+
+| Flyway doesn't | Do this instead | File |
+|---|---|---|
+| Deploy from a DACPAC. Redgate's Flyway documentation describes no command that takes a DACPAC as input to `migrate`, `prepare` or `deploy` | Keep SQL projects for authoring if you like: publish the DACPAC to a development database and let Flyway generate the migration from it. To inspect a DACPAC, SQL Compare can read one as a data source (labelled beta on its page) | 06, 19 |
+| Share a database with SqlPackage publishes. Once an environment is baselined, a state-based publish creates drift, and a publish that drops objects not in the project can remove the schema history table | Stop SqlPackage publishes to an environment the day it is baselined, and remove that pipeline step and account's write rights (file 06, cutover rules) | 06, 22 |
+| Generate a safe rollback for an irreversible change. Undo applies to versioned migrations only, not repeatable or baseline migrations, runs last in first out, and needs a paired undo script. It restores schema, not data | Fix forward. Keep a reviewed undo script as break-glass where it's safe, and design destructive changes as expand, then contract in separate releases | 14 |
+| Make `undo` a production rollback plan | Treat undo as a tool for lower environments and a person's last resort | 11, 14 |
+| Fix problems with `repair`. It edits the history table only, never the schema, and can hide a real problem | Treat `repair` as a recorded decision by a person, after the schema is right. Never automate it | 14, 22 |
+| Roll back a partly applied script across statements that can't run in a transaction. Some SQL Server statements, such as full-text changes, can't run inside one | Isolate non-transactional statements in their own migration | 08, 22 |
+| Save a snapshot after a hand-written CLI deployment by default. `deploy.saveSnapshot` defaults to false, though Flyway Desktop deploys save one | Run `flyway snapshot` after `migrate`, set `deploy.saveSnapshot` for `deploy`, or use Redgate's GitHub deploy action, which saves one unless `skip-snapshot` is set | 12, 14 |
+| Report drift across the estate in one command. Drift is reported one target at a time | Run `check -drift` per environment and collect results | 14 |
+| Create, copy or restore an Azure SQL database for you. No provisioner names Azure SQL Database or Managed Instance, and `backup` restores files Azure SQL Database can't restore | Create shadow and build databases with your infrastructure as code and point Flyway at them with `provisioner = "clean"`, or use a local SQL Server container for fast builds and keep one check against real Azure SQL | 16 |
+| Deploy from a GitHub-hosted runner into a private network on its own | Use self-hosted runners that can reach the on-premises server or the Azure SQL private endpoint | 12 |
+| Enforce an approval. The gate is GitHub's. On GitHub Free, Pro or Team, required reviewers apply only to public repositories, so a private repository's production gate is silently skipped | GitHub Enterprise, or a protected release branch with required approvals and checks on Team; prove the gate stops a run in your proof of concept | 12, 30 |
+
+## 5. History and traceability
+
+| Flyway doesn't | Do this instead | File |
+|---|---|---|
+| Reconstruct what your previous deployment tool ran. Flyway's history starts when a database is baselined or first migrated | Keep the old tool's records as the history before the baseline, and note the baseline version and date in your decision log | 07, 17 |
+| Edit applied migrations safely. Flyway records a checksum for every applied migration, so a changed file fails `validate` on every database that ran it | Never edit an applied migration. Add a new one. Revert a commit and ship a compensating migration, and never rebase or force-push a branch whose migrations others have applied | 14, 22 |
+| Record who approved a release. Flyway records what ran and when | Use the GitHub environment approval or the approved change request, the pull request and the ticket key as the approval record | 17, 30 |
+| Show state-based deployments on the Flyway Insights (preview) Deployments page. It lists migrations-based deployments only. The DORA metrics and business value (ROI) pages include both state-based and migrations-based deployments | Keep your own pipeline evidence as the record | 18 |
+
+## 6. Comparison and authoring
+
+| Flyway doesn't | Do this instead | File |
+|---|---|---|
+| Detect a rename that comes with other changes. It shows as a drop and an add, and Redgate lists renames among the generated scripts that need extra review | Review every generated script for drops. Split a rename into its own change or edit the generated migration by hand before review | 08 |
+| Treat hand-edited schema model files as checked | Change the development database and capture. If a team edits the model first, apply it to the development database and confirm a re-capture shows no differences (file 08's guardrails) | 08 |
+| Compare everything SQL Compare can. Flyway fixes 15 SQL Compare options (for example it can't ignore keys, check constraints or constraint names) and defaults some ignore options differently | Reproduce a difference in SQL Compare with matching options, and read the option documentation | 19 |
+| Document placeholder substitution for state-based deployment scripts. Placeholders work in versioned and repeatable migrations and SQL callbacks | Use migrations for anything that needs per-environment values | 10 |
+| Document command-line overrides for `prepare`'s comparison options, filters or static data on the pages checked | Keep them in `flyway.toml`, and prove any override in your POC before a pipeline depends on it | 10 |
+| Document comparison support for SQL Server ledger tables on the pages checked | If you use ledger tables, test generation and drift against your own schema in the POC, and keep ledger-table changes in hand-written migrations until you have | 08 |
+| Run against an environment whose `${env.X}` values aren't set. The command fails with "Unable to resolve environment variable: '<name>'". An unset variable in another, unused environment doesn't break the command on current engines (tested on the engine version file 25 lists), so one shared `flyway.toml` with every environment works. Not tested: placeholders and `[flyway]`-level settings that reference an unset variable | Keep every environment in the shared `flyway.toml`, and give each pipeline job the secrets for the environment it targets. Set any variable used outside an environment table in every job. A per-environment `ci/<environment>.toml` is optional, not required | 10, 12 |
+
+## 7. AI, the MCP server and Insights
+
+| Flyway doesn't | Do this instead | File |
+|---|---|---|
+| Let an AI agent deploy autonomously, and this library never suggests it | The pipeline plus a person's approval is the only route to a shared environment. The agent proposes; Flyway produces what runs | 20 |
+| Offer the MCP server (preview) as a deployment tool. It's a local server for development work on the development and shadow databases your project points it at, and it won't start without `-mcp.toolsets` | Keep the development and shadow environments disposable and never point them at a shared environment. Deploy only through the pipeline | 20 |
+| Run the MCP server (preview) inside a cloud-only AI service. It's a local process the AI tool starts, so Claude Projects, Microsoft 365 Copilot, Copilot Studio, Azure AI Foundry, Bedrock and Gemini Enterprise can't use it. Redgate documents registration for Claude Code and VS Code only | Load the library into those services as knowledge (file 03), and use the MCP server from an IDE or CLI agent; treat other tools' registration as vendor-documented and test it | 03, 20 |
+| Guarantee MCP tool names between releases. Redgate says tool names, parameters and behavior may change or be removed | Instruct agents by workflow, not by tool name | 20 |
+| Run Desktop AI features inside your tenant. They call Redgate's hosted AI service, which your organization's Redgate AI setting controls | Leave them off where public AI is blocked, unless your security team approves that service (files 03, 20) | 20 |
+| Let you choose where Flyway Insights (preview) data is hosted. The Security page documents one location, a Redgate-run service on AWS in eu-west-1 (Ireland), and describes no region choice or self-hosted option | Read the Insights Security, hosting and data page and your own data policy before anyone turns publishing on. Publishing is off until enabled, per project. Deployment results and the DDL of drifted objects are sent; table data and migration contents aren't | 18 |
+| Run Insights outside Redgate's hosted service | Get data policy sign-off first, or keep evidence in your own systems | 18 |
+
+## 8. Licensing
+
+| Flyway doesn't | Do this instead | File |
+|---|---|---|
+| Fail every step when it can't license. With no license found, Flyway runs its unlicensed feature set. Enterprise-only commands, such as `check -changes`, `check -drift`, `generate`, `diff`, `prepare`, `deploy`, `snapshot` and `mcp`, fail with a licensing error and exit code 35. But commands that also run unlicensed, such as `migrate`, carry on, and optional Enterprise behaviour within them can quietly not happen, so a step can pass with something missing | Check the edition the CLI reports at the start of every pipeline job and fail the job if it isn't Enterprise. Treat exit code 35 as a licensing failure (file 22) | 04, 12 |
+| Run Enterprise features without a license. Comparison-based features, drift, change reports, snapshots and the MCP server need Flyway Enterprise | Authenticate with a personal access token (`FLYWAY_EMAIL`, `FLYWAY_TOKEN`) or an offline permit (`FLYWAY_OFFLINE_PERMIT_PATH`) | 04 |
+
+## 9. In daily use
+
+- Before a design meeting, skim sections 3 and 4.
+- When someone proposes a shortcut in review ("just repair it", "edit the old script", "run it on all databases at once"), point at the row and the file it names.
+
+## 10. Instructions for the AI assistant using this file
+
+- Check this file before answering "can Flyway do X?" with a yes.
+- State a limit plainly, in the present tense, with the alternative and the file number. Don't hedge and don't predict product direction. If asked about future features, say you can't speak to plans and suggest the Redgate account team.
+- For versions or preview status, quote file 25 with its date, not this file.
+- For anything that touches production history (`repair`, editing an applied migration, rolling data back), point to files 14 and 22 and say a person decides.
+- Never suggest copying, comparing, exporting or pasting real rows or regulated data to work around a limit.
+- Never suggest an AI agent deploying to a shared environment.
+- If a limit isn't listed here, say so and don't invent one. For SQL Server Agent jobs, logins, linked servers and other server-level objects, give file 07, section 10: they're outside the database comparison, and hand-written migrations or a DBA infrastructure step deploy them. Mention SSIS packages only as something to test, not as a known limit.
+- Answer in the language the person writes in. Keep commands, keys, file names and error text in English.

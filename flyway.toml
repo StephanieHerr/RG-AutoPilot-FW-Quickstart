@@ -1,0 +1,184 @@
+databaseType = "SqlServer"
+id = "5d1c3a7e-2f64-4b8e-9a0d-7c6f1e4b9a21"
+name = "Flyway Setup Sandbox"
+
+# ---------------------------------------------------------------------------
+# SANDBOX PROJECT for SQL Server - for trying Flyway, not for real databases.
+# Your AI assistant adds the environments at the bottom during setup
+# (Oracle, PostgreSQL or MySQL: it swaps in the settings from oracle.md or
+# postgresql-mysql.md in .claude/skills/flyway-setup/).
+# Passwords never go in this file: set them in Flyway Desktop (they land in
+# flyway.user.toml, which is git-ignored) or pass them to the pipeline as secrets.
+# ---------------------------------------------------------------------------
+
+[flyway]
+defaultSchema = "dbo"
+errorOverrides = [ "S0001:0:I-" ]
+locations = [ "filesystem:migrations" ]
+mixed = true
+outOfOrder = false
+schemaModelLocation = "schema-model"
+validateMigrationNaming = true
+
+  [flyway.check]
+  rulesLocation = "Rules"
+  rulesConfig = "sqlfluff.cfg"
+  buildEnvironment = "Check"
+
+[flyway.sqlserver.clean]
+mode = "all"
+
+[flywayDesktop]
+enableMigrations = true
+developmentEnvironment = "development"
+shadowEnvironment = "shadow"
+deploymentPlatform = "PowerShell"
+
+  [flywayDesktop.generate]
+  undoScripts = true
+
+[redgateCompare]
+filterFile = "filter.rgf"
+
+  [redgateCompare.sqlserver]
+  filterFile = "Filter.scpf"
+
+[redgateCompare.sqlserver.options.behavior]
+addCreateOrAlterForRerunnableScripts = false
+addDropAndCreateForRerunnableScripts = false
+addNoPopulationToFulltextIndexes = false
+addObjectExistenceChecks = false
+addOnlineOnWhenCreatingIndexesOrAlteringColumns = false
+addWithEncryption = false
+considerNextFilegroupInPartitionSchemes = true
+decryptEncryptedObjects = true
+disableAutoColumnMapping = false
+dontUseAlterAssemblyToChangeClrObjects = false
+forbidDuplicateTableStorageSettings = false
+forceColumnOrder = false
+ignoreMigrationScripts = false
+includeDependencies = true
+includeRoleExistenceChecks = true
+includeSchemaExistenceChecks = true
+inlineFulltextFields = false
+inlineTableObjects = false
+useCaseSensitiveObjectDefinition = false
+useDatabaseCompatibilityLevel = false
+useSetStatementsInScriptDatabaseInfo = false
+writeAssembliesAsDlls = false
+
+[redgateCompare.sqlserver.options.ignores]
+ignoreAuthorizationOnSchemaObjects = false
+ignoreBindings = false
+ignoreChangeTracking = false
+ignoreCollations = true
+ignoreComments = false
+ignoreDataCompression = true
+ignoreDataSyncSchema = false
+ignoreDatabaseAndServerNameInSynonyms = true
+ignoreDmlTriggers = false
+ignoreDynamicDataMasking = false
+ignoreEventNotificationsOnQueues = false
+ignoreExtendedProperties = false
+ignoreFileGroupsPartitionSchemesAndPartitionFunctions = true
+ignoreFillFactorAndIndexPadding = true
+ignoreFullTextIndexing = false
+ignoreIdentitySeedAndIncrementValues = false
+ignoreIndexes = false
+ignoreInsteadOfTriggers = false
+ignoreInternallyUsedMicrosoftExtendedProperties = false
+ignoreLockPropertiesOfIndexes = false
+ignoreNocheckAndWithNocheck = false
+ignoreNotForReplication = true
+ignoreNullabilityOfColumns = false
+ignorePerformanceIndexes = false
+ignorePermissions = false
+ignoreReplicationTriggers = true
+ignoreSchemas = false
+ignoreSensitivityClassifications = false
+ignoreSetQuotedIdentifierAndSetAnsiNullsStatements = false
+ignoreSquareBracketsInObjectNames = false
+ignoreStatistics = true
+ignoreStatisticsIncremental = false
+ignoreStatisticsNoRecomputePropertyOnIndexes = false
+ignoreSynonymDependencies = false
+ignoreSystemNamedConstraintAndIndexNames = false
+ignoreTsqltFrameworkAndTests = true
+ignoreUserProperties = true
+ignoreUsersPermissionsAndRoleMemberships = true
+ignoreWhiteSpace = true
+ignoreWithElementOrder = true
+ignoreWithEncryption = false
+ignoreWithNoCheck = true
+
+[redgateCompare.sqlserver.data.options.mapping]
+includeTimestampColumns = false
+useCaseSensitiveObjectDefinition = true
+
+[redgateCompare.sqlserver.data.options.comparison]
+compressTemporaryFiles = false
+forceBinaryCollation = false
+treatEmptyStringAsNull = false
+trimTrailingWhiteSpace = false
+useChecksumComparison = false
+useMaxPrecisionForFloatComparison = false
+
+[redgateCompare.sqlserver.data.options.deployment]
+disableDdlTriggers = true
+disableDmlTriggers = false
+disableForeignKeys = false
+dontIncludeCommentsInScript = false
+dropPrimaryKeysIndexesAndUniqueConstraints = false
+reseedIdentityColumns = false
+skipIntegrityChecksForForeignKeys = false
+transportClrDataTypesAsBinary = false
+
+# ---------------------------------------------------------------------------
+# ENVIRONMENTS - SQL Server Express on US-SLS-49H24K4 (named instance SQLEXPRESS,
+# reached by its fixed port 1433 because SQL Server Browser is off),
+# Windows sign-in (integratedSecurity, so no passwords here).
+# Keep these names: the pipelines use them.
+#   development  NorthwindFW_Dev     where you make changes
+#   shadow       NorthwindFW_Shadow  scratch: Flyway rebuilds it to write migrations
+#   Check        NorthwindFW_Check   scratch: used by `flyway check`
+#   Build        NorthwindFW_Build   scratch: the pipeline rebuilds it from scratch
+#   Test         NorthwindFW_Test    first deployment target
+#   Prod         NorthwindFW_Prod    last deployment target (a SANDBOX "prod", never a real one)
+# shadow, Check and Build restore from the dataless baseline backup (Backup as Baseline).
+# ---------------------------------------------------------------------------
+
+[environments.development]
+url = "jdbc:sqlserver://US-SLS-49H24K4:1433;databaseName=NorthwindFW_Dev;encrypt=optional;integratedSecurity=true;trustServerCertificate=true"
+
+[environments.shadow]
+url = "jdbc:sqlserver://US-SLS-49H24K4:1433;databaseName=NorthwindFW_Shadow;encrypt=optional;integratedSecurity=true;trustServerCertificate=true"
+provisioner = "backup"
+
+  [environments.shadow.resolvers.backup]
+  backupFilePath = 'C:\Program Files\Microsoft SQL Server\MSSQL17.SQLEXPRESS\MSSQL\Backup\NorthwindFW_FlywayBaseline.bak'
+  backupVersion = "001"
+  sqlserver.generateWithMove = true
+
+[environments.Check]
+url = "jdbc:sqlserver://US-SLS-49H24K4:1433;databaseName=NorthwindFW_Check;encrypt=optional;integratedSecurity=true;trustServerCertificate=true"
+provisioner = "backup"
+
+  [environments.Check.resolvers.backup]
+  backupFilePath = 'C:\Program Files\Microsoft SQL Server\MSSQL17.SQLEXPRESS\MSSQL\Backup\NorthwindFW_FlywayBaseline.bak'
+  backupVersion = "001"
+  sqlserver.generateWithMove = true
+
+[environments.Build]
+url = "jdbc:sqlserver://US-SLS-49H24K4:1433;databaseName=NorthwindFW_Build;encrypt=optional;integratedSecurity=true;trustServerCertificate=true"
+provisioner = "backup"
+
+  [environments.Build.resolvers.backup]
+  backupFilePath = 'C:\Program Files\Microsoft SQL Server\MSSQL17.SQLEXPRESS\MSSQL\Backup\NorthwindFW_FlywayBaseline.bak'
+  backupVersion = "001"
+  sqlserver.generateWithMove = true
+
+[environments.Test]
+url = "jdbc:sqlserver://US-SLS-49H24K4:1433;databaseName=NorthwindFW_Test;encrypt=optional;integratedSecurity=true;trustServerCertificate=true"
+
+[environments.Prod]
+url = "jdbc:sqlserver://US-SLS-49H24K4:1433;databaseName=NorthwindFW_Prod;encrypt=optional;integratedSecurity=true;trustServerCertificate=true"

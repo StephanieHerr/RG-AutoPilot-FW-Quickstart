@@ -1,0 +1,32 @@
+# Flyway sandbox pipeline for GitLab CI/CD (Windows shell runner). The simplest version:
+#   1. check:  a report built on the Check database: changes, drift on Test, code review, SQL to run.
+#   2. deploy: applies pending migrations to Test and saves a snapshot for the next drift check.
+# Set up: pipelines/gitlab/README.md. Test and Check are environment names in flyway.toml.
+#
+# CI/CD variables (Settings > CI/CD > Variables):
+#   FLYWAY_EMAIL, FLYWAY_TOKEN (masked)    your Redgate account email and a personal access token
+#   TARGET_DATABASE_USERNAME, TARGET_DATABASE_PASSWORD (masked)    only for a SQL or database login
+
+stages: [ check, deploy ]
+
+workflow:
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "web"                     # Build > Pipelines > Run pipeline
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+      changes: [ migrations/**/* ]
+
+check:
+  stage: check
+  script:
+    - flyway auth -IAgreeToTheEula "-email=$env:FLYWAY_EMAIL" "-token=$env:FLYWAY_TOKEN"
+    - flyway check -dryrun -changes -drift -code -environment=Test "-user=$env:TARGET_DATABASE_USERNAME" "-password=$env:TARGET_DATABASE_PASSWORD" "-check.buildEnvironment=Check" "-environments.Check.user=$env:TARGET_DATABASE_USERNAME" "-environments.Check.password=$env:TARGET_DATABASE_PASSWORD" "-reportFilename=reports/Test-check.html"
+  artifacts:
+    when: always
+    paths: [ reports/ ]
+
+deploy-test:
+  stage: deploy
+  environment: test
+  script:
+    - flyway auth -IAgreeToTheEula "-email=$env:FLYWAY_EMAIL" "-token=$env:FLYWAY_TOKEN"
+    - flyway info migrate info -environment=Test "-user=$env:TARGET_DATABASE_USERNAME" "-password=$env:TARGET_DATABASE_PASSWORD" "-migrate.saveSnapshot=true"

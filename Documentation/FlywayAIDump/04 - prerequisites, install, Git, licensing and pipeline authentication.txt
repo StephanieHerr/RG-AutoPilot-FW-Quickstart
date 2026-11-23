@@ -1,0 +1,272 @@
+Flyway Enterprise AI library - file 04 of 32
+Prerequisites, install, Git, licensing and pipeline authentication
+Flyway reference library, October 2026. Generic guidance written for your AI assistant. It contains no data from your environment, and you shouldn't add any to these files.
+
+What this covers: Everything that has to be true before anyone captures or deploys a change: the master prerequisites checklist with an owner role per item, what to install on Windows workstations and GitHub Actions runners, the Git prerequisites, SQL Server and Azure SQL accounts and network paths, signing in and confirming Enterprise, CI authentication with a personal access token or offline permit, proxies, and a ten-command "ready to start" check.
+
+Not in this file: the proof of concept plan (file 05), `flyway.toml` and environments (file 10), the workflow files (file 12), and fixing install, Git or connection faults (file 23).
+
+Contents:
+1. What runs where
+2. The prerequisites checklist
+3. Workstation: Windows and Flyway Desktop
+4. Git prerequisites
+5. Databases, accounts and permissions
+6. Network, ports and proxies
+7. Redgate accounts: sign-in, tokens and offline permits
+8. GitHub: repository, protection, environments and runner
+9. Installing the CLI and the redgate/flyway image
+10. First sign-in and confirming Enterprise
+11. Ready to start: ten commands
+12. In daily use
+13. Limits
+14. Instructions for the AI assistant using this file
+
+## 1. What runs where
+
+Windows workstations run Flyway Desktop (which includes the CLI) and Git to capture, compare, generate and commit. GitHub holds repositories, pull requests, Actions and environments (file 12). Runners run the Flyway CLI or the `redgate/flyway` image to build, check and deploy; self-hosted runners sit where they can reach on-premises SQL Server. Nothing is installed on SQL Server or Azure SQL: Flyway connects over JDBC and adds one history table per target. Redgate's endpoints handle licensing and sign-in.
+
+## 2. The prerequisites checklist
+
+Numbered so file 05 can point at it. Start items 11 to 15 and 17 first: they need people outside your team.
+
+| # | Prerequisite | Owner role | Done when |
+|---|---|---|---|
+| 1 | Windows workstations meet Desktop's requirements (the .NET runtime) | Desktop support | Desktop starts |
+| 2 | Flyway Desktop on every machine that captures changes or generates migrations, including a DBA or release engineer who does | Each engineer | Desktop shows Enterprise |
+| 3 | One Git, 2.30.0 or later, on the PATH | Each engineer | `where.exe git` prints one path |
+| 4 | Git proven outside Flyway; default branch matches the remote; one authentication method | Each engineer, GitHub admin | Section 4 passes |
+| 5 | SQL Server and Azure SQL versions checked against the supported databases page | DBA | Each target has advanced capabilities (section 5) |
+| 6 | Development database (own or shared) with `db_owner` for the author | DBA | Author connects with full rights |
+| 7 | Shadow database per author who generates migrations: empty, can create schemas | DBA | Empty database exists |
+| 8 | Build database for the PR check: empty, not shared by concurrent runs | DBA | Empty database exists |
+| 9 | Deploy (migration owner) account per environment | DBA | Rights match section 5 |
+| 10 | Read-only check account | DBA | Reads schema, `flyway_schema_history` and `flyway_snapshot_history`, nothing else |
+| 11 | Runner reaches on-premises SQL Server ports | DevOps, network | `flyway testConnection` passes on the runner |
+| 12 | Runner reaches Azure SQL: firewall rules or private endpoint, name resolution | Cloud platform | `flyway testConnection` passes on the runner |
+| 13 | Workstations and runners reach github.com on 443 | Network | `git fetch` passes on both |
+| 14 | Workstations and runners reach Redgate licensing hosts, or use an offline permit | Network | `flyway --version` shows Enterprise |
+| 15 | Proxy settings decided for Windows and for Linux or Docker | Network, DevOps | `-X` output shows the proxy |
+| 16 | Redgate ID with "Desktop tools" and "Flyway Engine" licenses allocated to each author | License admin | Desktop and the CLI both show Enterprise |
+| 17 | CI Redgate account with a Flyway Engine license allocated (confirm the commercial position with your Redgate account team, section 7); token stored as GitHub secrets `FLYWAY_EMAIL` and `FLYWAY_TOKEN` | License admin, DevOps | A runner job reports Enterprise |
+| 18 | Offline permit for any air-gapped runner | License admin | Enterprise shown with the permit path set |
+| 19 | Repository, branch protection with required checks, code owners | GitHub admin | A direct push to the default branch is refused |
+| 20 | Environments `test`, `uat`, `production` with required reviewers (on a private repository this needs GitHub Enterprise, section 8) | GitHub admin | A production job waits for approval |
+| 21 | Runner installed as a service, CLI at one pinned version | DevOps | A job prints the pinned version |
+| 22 | Pinned Flyway version recorded in the decision log (file 01) | Team lead | Desktop, CLI and runner report the same engine |
+
+## 3. Workstation: Windows and Flyway Desktop
+
+Desktop on Windows needs the .NET runtime from Microsoft, and isn't needed on CI runners (System requirements page).
+
+Download the installer from Redgate's Installers page (https://documentation.red-gate.com/flyway/getting-started-with-flyway/installers). It includes the Flyway command line. Install Git first (section 4), sign in (section 10), then open or create the project and add your own `development` and `shadow` connections.
+
+That page gives download links only and doesn't document silent-install switches, so ask Redgate Support or your packaging team before planning a managed rollout. Keep projects out of OneDrive folders: Redgate's "Projects in OneDrive" troubleshooting page says Flyway may have trouble reading and writing files there and recommends saving projects elsewhere.
+
+## 4. Git prerequisites
+
+Teams lose days here before the first green pipeline. Do all of it before opening Desktop.
+
+- Keep one `git` on the PATH: `where.exe git` must return one path. Two Gits is the most common cause of odd behavior. The minimum is 2.30.0, and older Git gives "The Git command line is not available" on the Version control tab (System requirements page).
+- Validate `git status`, `git fetch` and `git push` in a terminal, outside Flyway. If they fail there, Desktop fails too.
+- Set the default branch name to match the remote. Git's documentation says `init.defaultBranch` controls the name for new repositories, and the fallback is currently `master`.
+- Standardize authentication: Git Credential Manager for HTTPS, or ssh-agent for SSH, one for the whole team.
+- If Desktop can't reach github.com:443 through the corporate proxy, clone with GitHub Desktop or the Git CLI, then in Desktop click **Open project...** and select the folder holding the Flyway project (Redgate's tutorial "Open an existing project from the file system").
+
+To set the default branch name for new repositories: `git config --global init.defaultBranch <branch-name>`. Section 11 has the checks.
+
+## 5. Databases, accounts and permissions
+
+Check Redgate's supported databases page (https://documentation.red-gate.com/fd/supported-databases-and-versions-143754067.html) for your exact versions. Advanced capabilities (comparison, drift, change reports, state-based) cover SQL Server 2016 and later, Azure SQL Database and Azure SQL Managed Instance. Older SQL Server versions get the foundational commands only (`info`, `migrate`, `validate`, `repair`, `baseline`).
+
+| Platform | Foundational commands | Advanced capabilities |
+| --- | --- | --- |
+| SQL Server 2016 to 2025 | Yes | Yes (SQL Server 2025 from engine 11.16) |
+| SQL Server 2008 to 2014 | Yes | No: migrations only |
+| Azure SQL Database, Azure SQL Managed Instance, Amazon RDS for SQL Server | Yes | Yes |
+| SQL Server on Google Cloud | Yes | Yes |
+| Fabric SQL Database | Yes (from engine 11.9.2) | No: Redgate's driver page says advanced capabilities "will not currently work" |
+| Fabric Data Warehouse | Listed as supported for foundational commands on the supported databases page, but its driver page still says preview. Confirm before you rely on it | No |
+| Fabric Lakehouse, Eventhouse, Cosmos DB in Fabric, Mirrored Databases | Not supported | Not supported |
+| Babelfish for Aurora PostgreSQL | Yes (from engine 12.1), through the SQL Server driver | No |
+
+| Account | Used by | Needs |
+|---|---|---|
+| Developer | An author in Desktop | `db_owner` on the development database. On shadow, permission to create schemas, or the tracked schemas must already exist with the same casing as in development |
+| Deploy (migration owner) | Deploy job, one per environment | Redgate's "Connecting to environments" page: `CREATE`, `ALTER`, `DROP` on the managed schemas; `INSERT`, `UPDATE`, `DELETE` on the history table; plus whatever the scripts themselves need (granting roles, creating users) |
+| Read-only check | Drift check, `info`, the target side of a dry run or change report | Same page: read access to schema metadata and `SELECT` on the history table. For drift checks, `VIEW DEFINITION` plus `SELECT` on both `flyway_schema_history` and `flyway_snapshot_history`, because `check -drift` reads the snapshot stored in the target. SQL Compare's permissions page gives `VIEW DEFINITION` as the minimum for comparing, and `SELECT` on `sys.sql_expression_dependencies` because comparing is very slow without it |
+| Shadow and build | Desktop shadow, PR check, the build side of a change report | Full DDL rights. Flyway rebuilds these, so they hold no real data and are never production |
+
+SQL Compare's page recommends `db_owner` for deploying and says `db_ddladmin` "might be an option". Objects the account can't view go missing from comparison results, and comparing encrypted objects needs `sysadmin`. Redgate's page says to use a separate read-only credential for drift checks and keep write-capable credentials for deployments.
+
+The two scripts below are composed from those pages, not copied from them. Prove them in the proof of concept: run the full migration set as the deploy account against a build database, and run one comparison as the check account and one as an owner, then diff the results. Anything missing from the check account's result is a permission gap.
+
+> Not from Redgate docs — starting point, validate in your environment.
+```sql
+-- Read-only check account. Run as the admin role in each target database.
+CREATE USER [<check-user>] FOR LOGIN [<check-login>];
+GRANT VIEW DEFINITION TO [<check-user>];
+GRANT SELECT ON sys.sql_expression_dependencies TO [<check-user>];
+GRANT SELECT ON [<schema>].[flyway_schema_history] TO [<check-user>];
+GRANT SELECT ON [<schema>].[flyway_snapshot_history] TO [<check-user>];  -- check -drift reads the stored snapshot
+```
+
+> Not from Redgate docs — starting point, validate in your environment.
+```sql
+-- Deploy (migration owner) account. Confirm with your DBA: db_ddladmin covers DDL;
+-- reader and writer cover the history table and data migrations. Scripts that GRANT
+-- permissions or create users need more (for example db_securityadmin, or db_owner
+-- as SQL Compare recommends). Flyway creates the history table on first migrate.
+CREATE USER [<deploy-user>] FOR LOGIN [<deploy-login>];
+ALTER ROLE db_ddladmin ADD MEMBER [<deploy-user>];
+ALTER ROLE db_datareader ADD MEMBER [<deploy-user>];
+ALTER ROLE db_datawriter ADD MEMBER [<deploy-user>];
+```
+
+For Azure SQL with Microsoft Entra ID, Redgate's tutorial creates the user with `CREATE USER [<name>] FROM EXTERNAL PROVIDER` and adds it to `db_ddladmin`; the server needs a Microsoft Entra admin. Connection strings and secrets are in file 10.
+
+## 6. Network, ports and proxies
+
+| From | To | Notes |
+|---|---|---|
+| Workstations, runners | On-premises SQL Server | TCP 1433 on a default instance. Named instances use dynamic ports unless pinned. Put the port in the JDBC URL. Prove it from the runner, not a laptop |
+| Clients using a named instance with no port | SQL Server Browser | UDP 1434. If Browser isn't running or is blocked, name the port |
+| Workstations, runners | Azure SQL Database | Outbound TCP 1433 to `<azure-sql-server>.database.windows.net`. A server-level IP firewall rule or a private endpoint must admit the caller. With a private endpoint, still use the `database.windows.net` name: Microsoft says logins to the private IP or `privatelink` name fail by design |
+| Workstations, runners | github.com | HTTPS 443 |
+| Workstations, runners | Redgate licensing | HTTPS 443 and HTTP 80, by DNS name |
+
+From Microsoft Learn: a new Azure SQL logical server blocks its public endpoint until a rule exists, and rule changes take up to five minutes. "Allow Azure services and resources to access this server" admits every customer's Azure services, so prefer a private endpoint. Managed Instance has its own network model.
+
+Redgate's allowlist is its Support article "Licensing & update URLs to add to your AllowList in firewall" (https://productsupport.red-gate.com/hc/en-us/articles/360002374673). It lists these names, over HTTPS (443) and HTTP (80), and asks you to allow DNS names rather than IP addresses, which can change: `licensing.red-gate.com`, `productlogin.red-gate.com`, `update.red-gate.com`, `permits.red-gate.com`, `identityprovider.red-gate.com`, `portal.red-gate.com`, `trials.red-gate.com`, `download.red-gate.com`, `appinsights.red-gate.com` and `productusage.red-gate.com`. Check the article for changes before you raise the firewall request.
+
+Telemetry. Redgate editions of Flyway send usage telemetry unless you switch it off. Set the `REDGATE_DISABLE_TELEMETRY` environment variable to any non-empty value on workstations and runners; Flyway Desktop honors it too (https://documentation.red-gate.com/fd/redgate-disable-telemetry-environment-variable-277579301.html). Licensing calls still go out, and Flyway Insights sends data only for projects you opt in (file 18). What Redgate collects and why is set out in its privacy notice (https://www.red-gate.com/trust/privacy-notice). Give your security team that notice and this list, and don't describe Flyway as sending nothing outside your network.
+
+Proxies. Flyway is a JVM application and doesn't pick up the operating system proxy the way a browser does (Redgate's Network Troubleshooting page).
+
+- Windows: set `FLYWAY_USE_SYSTEM_PROXIES=true` to make the CLI pass the Windows proxy settings to Java. It is off unless set to `true`. From engine 13.9.0 it defaults to off; engines 13.4.0 to 13.8.x inherited the OS proxy automatically, so a machine that relied on that loses Flyway's internet access after upgrading until you set it. Or set the proxy explicitly in `JAVA_ARGS`. When system proxies are on, the Windows WPAD/PAC lookup adds about 90 to 100 ms to each run.
+- Linux runners and the Docker image: the page says the JVM only reads a manually entered proxy there, so `FLYWAY_USE_SYSTEM_PROXIES` doesn't help. Set `JAVA_ARGS`. Explicit `JAVA_ARGS` properties always win. `http.nonProxyHosts` covers both HTTP and HTTPS.
+- `JAVA_ARGS` carries any JVM option, not only proxy properties: for example `-Xmx` to raise the memory limit. Put every option the machine needs in the one variable.
+- Add `-X` to any command to log the proxy Flyway detected.
+- These settings cover Flyway's own HTTP calls (licensing, update checks), not the JDBC connection to the database.
+
+> Not from Redgate docs — starting point, validate in your environment.
+```bash
+# Linux runner (Windows: set JAVA_ARGS with $env:JAVA_ARGS = "...")
+export JAVA_ARGS="-Dhttps.proxyHost=<proxy-host> -Dhttps.proxyPort=<port> -Dhttp.nonProxyHosts=<internal-pattern>"
+docker run --rm -e JAVA_ARGS redgate/flyway:<pinned-version> --version -X
+```
+
+## 7. Redgate accounts: sign-in, tokens and offline permits
+
+Redgate's Licensing page splits the license in two. "Desktop tools" covers Flyway Desktop and the SQL Compare family. "Flyway Engine" covers the command line, CI and the `redgate/flyway` image. Someone with only Desktop tools sees Enterprise in Desktop while their own CLI runs without Enterprise features, so allocate both to every author.
+
+| Where | Method |
+|---|---|
+| Desktop | Redgate ID sign-in, interactive, automatic activation |
+| Your own CLI | `flyway auth -IAgreeToTheEula`: opens a browser, one time, not for pipelines, doesn't work over WSL or SSH. From engine 12.11.0, `flyway auth` without `-IAgreeToTheEula` starts an interactive EULA prompt, so always pass the flag in scripts |
+| GitHub Actions | Personal access token: `FLYWAY_EMAIL` and `FLYWAY_TOKEN` |
+| Air-gapped runner | Offline permit: `FLYWAY_OFFLINE_PERMIT_PATH` |
+
+Trial. `flyway auth -startEnterpriseTrial` starts a Flyway Enterprise trial from the CLI. It's a time-limited trial; confirm its terms with Redgate before a proof of concept depends on it.
+
+Personal access token. Redgate suggests an account "not tied to a particular end user"; create the token at https://identityprovider.red-gate.com/personaltokens. Allocate a Flyway Engine license to that account. Redgate's pages disagree on whether it needs one: the Licensing page (updated 12 May 2026) says every licensing option needs "a Redgate account and the account has been allocated a Flyway license", while the older Commercial Licensing FAQ (updated 7 November 2024) says a service account used to generate a CI token isn't required to buy one. Allocate the license, and confirm the commercial position with your Redgate account team. Engine 12.8.0 didn't recognise `FLYWAY_EMAIL` and `FLYWAY_TOKEN`, so use 12.8.1 or later for token licensing. Store both values as GitHub secrets and pass them as the environment variables, or as the `email` and `token` inputs of `red-gate/setup-flyway`. Treat the token like a password and never write it literally in `flyway.toml` or the repository.
+
+Offline permit for the CLI. Download it from the CLI permit link on Redgate's Licensing page (https://permits.red-gate.com/offline?productCode=63), save it to a file, and point `FLYWAY_OFFLINE_PERMIT_PATH` (TOML `offlinePermitPath` under `[flyway]`) at the file; the permit is too large to pass inline. It expires after 365 days or at subscription end, and then Flyway drops back to its unlicensed feature set, so put the renewal in the team calendar. From engine 12.8.0, Flyway warns when an offline permit is within 30 days of expiry; watch for that warning in pipeline logs. Flyway Desktop uses a separate permit from its own link on the same page (https://permits.red-gate.com/offline?productCode=64): user menu, Licensing, Manage offline license, or the `REDGATE_LICENSING_PERMIT_PATH` variable. That Desktop variable doesn't license the CLI; from engine 12.0.0 the CLI reads only `FLYWAY_OFFLINE_PERMIT_PATH`.
+
+Where permits are stored. When the CLI licenses online (token or `flyway auth`), it keeps a permit in `%APPDATA%\Redgate\Flyway CLI` on Windows, or `~/.config/Redgate/Flyway CLI` on macOS and Linux. Keep that folder out of the repository, and never copy a permit into the project.
+
+Precedence when several are set: offline permit; then online authentication (token, then interactive `auth`); then a legacy license key (deprecated; this library doesn't use them).
+
+Single sign-on. Redgate's single sign-on (OIDC) works with Entra ID and covers Flyway Desktop and the CLI sign-in. It needs a Redgate Portal organization, an Org Admin, a DNS TXT record for each email domain (which must stay in place) and your identity provider's issuer URL and client ID (https://productsupport.red-gate.com/hc/en-us/articles/28856477621149). Once it's on, everyone in that domain signs in through your identity provider for every Redgate tool, not only Flyway, so plan it with whoever administers your other Redgate products. Pipelines keep using the service account's personal access token.
+
+## 8. GitHub: repository, protection, environments and runner
+
+- Repository: pushers have push rights, and the default branch name matches Git's configuration.
+- Branch protection: require a pull request and passing status checks on the default branch, with code owners for `callbacks/` and pipeline files.
+- Environments: GitHub's "Managing environments for deployment" page says required reviewers can be up to six people or teams, one approval suffices, "Prevent self-review" stops the person who triggered the run approving it, and a job reaches environment secrets only after protection rules pass. You can restrict deploying branches. Plan check: the same page says environments in private or internal repositories need GitHub Pro, Team or Enterprise, and that on Free, Pro and Team, required reviewers and wait timers work only in public repositories. For required reviewers on a private repository, confirm your organization is on GitHub Enterprise.
+- Secrets: GitHub doesn't pass secrets to workflows triggered from forks, except `GITHUB_TOKEN` (GitHub's "Using secrets" page). Plan for contractors who work from forks (file 23).
+- Runner: self-hosted, inside the network that reaches on-premises SQL Server. On Windows the service is configured during runner setup; on Linux, `./svc.sh install <USERNAME>` runs it as a chosen user. Restrict production runners with runner groups and treat runners as part of your security boundary.
+- If security refuses self-hosted runners, Redgate's production connectivity guide lists GitHub-hosted larger runners on Azure private networking (GitHub Enterprise Cloud), a VPN or tunnel step, or IP allowlisting (the weakest).
+
+## 9. Installing the CLI and the redgate/flyway image
+
+| Route | How | Notes |
+|---|---|---|
+| Desktop installer | Includes the CLI | Workstations |
+| CLI archive | Windows x64, macOS x64 and arm64, Linux x64, from Redgate's Command-line page. Extract and add the folder to the PATH | No Linux arm64 archive |
+| `redgate/flyway` image | `docker pull redgate/flyway:<pinned-version>` | Not the open-source `flyway/flyway` image |
+| `red-gate/setup-flyway` | In the workflow (file 12) | `edition` and `i-agree-to-the-eula` are required; `version` defaults to `latest`, so always set it; `email` and `token` take the PAT secrets |
+
+Redgate's Docker page mounts the project at `/flyway/project` and passes `-workingDirectory=project`. A custom image needs the OS packages listed there, because the comparison engines run on .NET. That page puts the token in `flyway.toml`; this library uses environment variables.
+
+> Not from Redgate docs — starting point, validate in your environment.
+```bash
+wget -qO- https://download.red-gate.com/maven/release/com/redgate/flyway/flyway-commandline/<pinned-version>/flyway-commandline-<pinned-version>-linux-x64.tar.gz | tar -xvz
+sudo ln -s "$(pwd)/flyway-<pinned-version>/flyway" /usr/local/bin/flyway
+flyway --version
+```
+
+The platform archives include a Java runtime in a `jre` folder, and the launcher uses it ahead of `JAVA_HOME` when it is present. A self-hosted runner shared with other Java tools is fine as long as that folder is intact.
+
+## 10. First sign-in and confirming Enterprise
+
+1. Launch Desktop and sign in with your Redgate ID. Redgate's POC checklist says to confirm **Enterprise** at the top left. If it shows Community, the ID has no allocated license: ask your license admin before debugging anything else. If Desktop can't open a browser for sign-in, copy the sign-in link to the clipboard and open it yourself (from Desktop 9.5.3). Sign-in needs red-gate.com allowed through the firewall, as well as the licensing hosts in section 6.
+2. In a terminal run `flyway --version`; add `-outputType=json` and look for `"edition" : "ENTERPRISE"`.
+3. If Desktop says Enterprise and the CLI says Community, run `flyway auth -IAgreeToTheEula` once and recheck. Still Community means Flyway Engine isn't allocated.
+4. `flyway auth -logout` deletes the cached permit and refresh token. A permit or token set by environment variable still applies.
+5. After upgrading a workstation's CLI across engine 13.6.0, run `flyway auth -IAgreeToTheEula` once more. Runners licensed by token are unaffected.
+
+Make `flyway --version` the first step of every pipeline job. An unlicensed job still runs commands such as `migrate`, and optional Enterprise behaviour within them can quietly not happen. Enterprise-only commands, such as `check -drift`, fail with a licensing error and exit code 35.
+
+## 11. Ready to start: ten commands
+
+Run in order and stop at the first failure (file 23). Steps 1 to 7 run on a workstation, 8 to 10 on a runner. If you deploy to Azure SQL, repeat step 9 for it.
+
+> Not from Redgate docs — starting point, validate in your environment.
+```powershell
+# 1-4: Git, on the workstation
+where.exe git                                           # one path
+git --version                                           # 2.30.0 or later
+git fetch origin                                        # proves auth, proxy and github.com:443
+git push origin HEAD:refs/heads/setup-check/<your-id>   # then delete that branch
+
+# 5-7: Flyway, on the workstation, project folder open
+flyway --version -outputType=json                       # "edition" : "ENTERPRISE"
+flyway testConnection -environment=development
+flyway testConnection -environment=shadow
+
+# 8-10: on the runner (same commands in bash), FLYWAY_EMAIL and FLYWAY_TOKEN set
+flyway --version -outputType=json
+flyway testConnection -environment=test
+flyway info -environment=test
+```
+
+These read the `test` environment from the shared `flyway.toml`, so the runner needs only the secrets that environment uses. A per-environment `ci/<environment>.toml` passed with `-configFiles` is optional: it loads in addition to `flyway.toml`, not instead of it (file 10).
+
+`testConnection` checks that Flyway and its comparison engines reach the database, changes nothing, and exits non-zero on failure (Redgate's Test Connection page). Unlike `info`, it triggers no callbacks or validation. Don't run `migrate` until the preview path works: once a migration is on a branch, the first real check is `flyway check -dryrun -environment=test`, which generates the deployment script that would run (Redgate's Check page). All the `check` options this library uses are part of Flyway Enterprise.
+
+## 12. In daily use
+
+- Keep Desktop, workstation CLIs and the runner on one engine version; when Desktop updates, move the runner pin with it (file 25).
+- Renew offline permits before expiry, and rotate the CI token on your security team's schedule.
+- After any update, check Desktop and `flyway --version` still show Enterprise. For a new contractor, run items 2, 3, 4 and 16.
+
+## 13. Limits
+
+- `flyway auth` needs a browser. Runners use a token or offline permit, and an offline permit doesn't refresh itself.
+- Proxy settings cover Flyway's own HTTP calls, not the JDBC connection.
+- Linux arm64 has no CLI archive; `setup-flyway` offers a Java build that needs Java 17 or later.
+- Silent-install options aren't documented on the Installers page.
+- Required reviewers on private repositories depend on your GitHub plan.
+- Flyway doesn't create runners, firewall rules, private endpoints, accounts or branch protection.
+
+## 14. Instructions for the AI assistant using this file
+
+- When asked "what do we need before we start?", answer from section 2, name each owner role, ask which items are done, and offer to record progress in the team's decision log (file 01).
+- Never put a real token, permit, password, host, server name or connection string in an example. Use placeholders and `${env.X}`.
+- Never suggest `flyway auth` or a license key for a pipeline. Suggest the token, or an offline permit with no internet. If Flyway reports Community, check sections 7 and 10 first.
+- If a connection works from a laptop but not a runner, start with section 6, then file 23. For Git problems, run section 4 in order before looking at Flyway.
+- Never suggest granting the check account more than section 5 lists, or `sysadmin`.
+- Keep real deployment disabled until `testConnection`, `info` and a `check -dryrun` preview work from the runner.
+- For license counts or commercial terms, refer the person to their Redgate account team.
+- Answer in the language the person writes in. Keep commands, keys, file names and error text in English.

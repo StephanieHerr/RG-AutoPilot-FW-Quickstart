@@ -1,0 +1,392 @@
+Flyway Enterprise AI library - file 08 of 32
+Developer workflows - every way to make a change and how to choose
+Flyway reference library, October 2026. Generic guidance written for your AI assistant. It contains no data from your environment, and you shouldn't add any to these files.
+
+What this covers: Every route a developer can use to make a database change on SQL Server, on-premises and in Azure: Flyway Desktop with a dedicated or a shared development database, schema-model-first editing, the CLI, VS Code task buttons, the Flyway MCP server in an AI tool, hand-written migrations with `flyway add`, generation in the pipeline, and regenerating instead of hand-patching. It compares them, helps you choose, and gives the daily loop, pulling teammates' changes, switching branches, reviewing a generated script, a scratch loop for large features, a first-day checklist, and what Flyway Desktop shows and asks on the way (history views, deploy buttons, and the baseline and erase prompts).
+
+Not in this file: Designing the whole dev to pull request to operations flow for a team (file 28, workflow architect), situation cards such as greenfield or brownfield (file 29, scenario playbooks), version numbering and collisions across teams (file 09), `flyway.toml`, filters and secrets (file 10), the pipeline (files 11 and 12), pull request checks in depth (file 13), building development and shadow databases (file 16), the MCP server's setup and guardrails (file 20), SQL Prompt (file 19).
+
+Contents:
+1. Every route produces the same files
+2. The routes compared
+3. How to choose
+4. Route 1: Flyway Desktop with a dedicated development database
+5. Route 2: Flyway Desktop with a shared development database
+6. Route 3: Schema-model-first editing, then Update development
+7. Route 4: The CLI
+8. Route 5: VS Code task buttons calling the CLI through PowerShell
+9. Route 6: The Flyway MCP server in an AI tool (preview)
+10. Route 7: Hand-written migrations with `flyway add`
+11. Route 8: Generated in the pull request or pipeline
+12. Regenerate a fresh script instead of hand-patching
+13. Review the generated script, then self-check
+14. Pulling teammates' changes
+15. Switching branches
+16. The scratch loop for large features
+17. New developer: first day
+18. Flyway Desktop: what you'll see, and the prompts to read carefully
+19. In daily use
+20. Limits
+21. Instructions for the AI assistant using this file
+
+## 1. Every route produces the same files
+
+Whichever route a developer uses, the output is the same: one file per object in `schema-model/`, and versioned (`V`), undo (`U`), baseline (`B`) and repeatable (`R`) scripts in `migrations/` (https://documentation.red-gate.com/fd/flyway-projects-271585108.html). The pipeline only sees those files. That's why teams can differ in how they author while every team shares one pipeline, one numbering scheme and one set of checks (file 28, section 4).
+
+Redgate's documented primary path is: change your development database with any tool, capture the change into the schema model, then generate a migration from the model against the shadow database. Schema model files are generated object scripts. Every other route is a variation on that path, or a deliberate exception to it.
+
+Why a shadow and not a real database: the shadow replays the committed migrations, so the comparison finds only the new change. Redgate's generating migrations page warns that comparing against a real target duplicates anything already in a migration that hasn't been deployed there yet, and the duplicated migrations then fail to deploy. Shadowless generation is safe only when each migration is deployed before the next one is generated, which rarely holds for several developers working in parallel.
+
+Saving to the schema model and committing deploys nothing. Only the pipeline deploys.
+
+## 2. The routes compared
+
+| Route | Suits | Git skill needed | Main risks | Guardrail |
+|---|---|---|---|---|
+| 1. Desktop, dedicated development database | SQL-first developers, the default for most | Low: Desktop's own Git panel is enough | Skipping "save before pull" lets your database drift from Git | Save, pull, Update development |
+| 2. Desktop, shared development database | Very small teams, or a database too large to copy | Low | Capturing or overwriting a colleague's work; nobody can tell what's committed | Select only your objects; never apply the model to the shared database |
+| 3. Schema-model-first | Experienced developers on a dedicated database, simple object edits | Medium | The parser can misread a hand edit; overwrites unsaved database changes | Re-capture must show no differences |
+| 4. CLI | Developers who live in a terminal | Medium | No GUI dependency review; stale diff artifacts | Read `diffText` output; pass `artifactFilename` |
+| 5. VS Code tasks | VS Code users who want buttons | Medium | Tasks hide what runs; credentials leak into the file | Commit the tasks file, keep connections in `flyway.user.toml` |
+| 6. MCP server in an AI tool (preview) | Teams already using AI coding agents | Medium to high | Agent applies something nobody read; tool names can change | Narrowest toolset, development and shadow only, a person reviews every diff |
+| 7. `flyway add` | Data motion, renames, splits, online index work | Medium | Model and migrations disagree afterwards | Capture the result into the model after |
+| 8. Generated in the pipeline | Teams who shouldn't need Flyway tooling (SSDT or ORM developers) | Low for developers, high for the pipeline owner | Generation errors arrive late, in the pull request | One generator at a time; data steps hand-written |
+
+## 3. How to choose
+
+1. Is your development database dedicated or shared? Dedicated opens every route. Shared limits you to route 2 (and 4 or 5 used the same careful way), because routes 3 and 6 apply the model to the database and can undo colleagues' work.
+2. What tool do people already open every day? SSMS users fit route 1. VS Code users fit route 5 on top of route 4. AI-agent users fit route 6, still on a dedicated database.
+3. Does the change move data, rename or split? Use route 7 for that part, whatever the main route.
+4. Do some developers never touch Flyway tooling (SSDT, Entity Framework)? Route 8 for them, designed with file 28 (reference design D).
+5. Is anyone new to Git? Route 1 with Desktop's Git panel, trunk plus very short branches. Leave routes 3 and 6 until the team is comfortable.
+
+Routes can mix inside one team, because they write the same files. Record each team's choice in your decision log (file 01).
+
+## 4. Route 1: Flyway Desktop with a dedicated development database
+
+The default. Your connection lives in `flyway.user.toml` (Desktop's "Save to user settings" default), so it isn't shared (https://documentation.red-gate.com/fd/tutorial-configure-the-development-database-138346991.html).
+
+> Not from Redgate docs — starting point, validate in your environment.
+
+```text
+Pull main, bring your development database up to main (section 14)
+  -> branch named with the ticket key (<ticket-key>)
+  -> change your development database (SSMS, VS Code or Visual Studio, with SQL Prompt)
+  -> Schema model page: refresh, select this ticket's objects, Save
+  -> Generate migrations page: ticket key in the description, generate V (+ U), review (section 13)
+  -> merge main again, confirm your version is still the highest (file 09)
+  -> commit schema model + migration together, push, open the pull request
+```
+
+Capture reads the database, not your editor, so a designer change is picked up like a query-window change. Desktop prompts for dependencies; for SQL Server it pulls them in even when a filter excludes them, so read every generated script for objects you didn't touch. Use `sp_rename` for a rename so the intent survives (section 13).
+
+Undo generation is off unless you turn it on. Set both namespaces so Desktop and the CLI agree:
+
+> Not from Redgate docs — starting point, validate in your environment.
+
+```toml
+[flywayDesktop.generate]
+undoScripts = true
+
+[flyway.generate]
+types = ["versioned", "undo"]
+timestamp = "always"
+```
+
+`[flyway.generate] types` is the setting the CLI reads. The Flyway MCP server's `generate_migrations` (preview) follows it too and falls back to `[flywayDesktop.generate] undoScripts` when `types` isn't set, so setting both keeps Desktop, the CLI and an agent in step (file 20).
+
+A generated undo is a starting point. For an added column it drops the column and every value written since. Review it like the forward script.
+
+## 5. Route 2: Flyway Desktop with a shared development database
+
+Redgate's development database page says a shared database "could increase human error, limit the ability of team members to experiment". Git clones are private but the database isn't, so nobody can tell which changes in it are committed, or on which branch (https://documentation.red-gate.com/fd/development-database-environment-configuration-138346960.html). It's supported. Here's how capture and commit work safely:
+
+- Connection: the URL goes in project settings (`flyway.toml`), so everyone points at the same database. Credentials stay in user settings or integrated authentication.
+- Capture: the Schema model page lists every difference between the shared database and your copy of the model, including colleagues' uncaptured work. Select only this ticket's objects, one by one. Treat "select all" as a question, not a default. A filter file (file 10) keeps other teams' schemas out of the list. Avoid scheduled or end-of-day capture of a shared database: it puts everyone's changes in one commit and loses who made each one, which your auditors will ask about (file 17). Capture by the person who made the change, per ticket, keeps that link.
+- Generate: unchanged. Your shadow database is still your own; a shared shadow gives unpredictable results.
+- Commit: only your object files and your migration. One ticket per pull request.
+- Pull: pull and resolve conflicts only. Colleagues' changes are already in the database. Don't use Update development: applying the model to a shared database can undo their work (https://documentation.red-gate.com/fd/pulling-in-changes-from-version-control-277580546.html).
+- Branches: the database doesn't follow your branch. Switching branches changes your files, not the database. Keep branches very short.
+- Don't run `migrate` against the shared development database. Its state comes from people's edits; your migration proves itself on your shadow and in the pull request build. This is a design choice, not a Redgate rule.
+
+Moving to dedicated later: capture the shared database into the model, give each developer a database built from source (file 16), move the connection into `flyway.user.toml`, and keep the old database as an integration environment only the pipeline deploys to.
+
+## 6. Route 3: Schema-model-first editing, then Update development
+
+Here you edit an object file in `schema-model/` (by hand, or by accepting a merge), then apply it to your development database. It's possible but it isn't Redgate's documented primary path. The one documented case is resolving a Git merge conflict in an object file and then applying it with Update development (https://documentation.red-gate.com/fd/tutorial-resolve-merge-conflicts-277580692.html).
+
+Steps:
+
+1. Save any unsaved development database work to the model first. Applying overwrites unsaved changes to the same object.
+2. Edit the object file. Keep Redgate's formatting; change only what you mean.
+3. Apply it: Desktop's Update development page, select the object, Apply, review the script, Apply now. On some Desktop versions the page sits under Settings, Preview features; older versions call it Apply to database on the Schema model page (https://documentation.red-gate.com/fd/tutorial-apply-database-changes-from-the-schema-model-to-your-database-277580549.html). The CLI equivalent is in section 7.
+4. Verify by re-capture. Compare development against the model. It must show no differences. A difference means the comparison engine read your edit differently from what you wrote: fix the database, re-capture, and let the captured file replace yours.
+5. Generate the migration as in route 1.
+
+Don't use this route on a shared development database, for renames, splits or data changes (route 7), for a team new to Git, or when the model is under heavy concurrent change.
+
+## 7. Route 4: The CLI
+
+Run from the project folder. `diff`, `model`, `generate`, `prepare` and `deploy` are Flyway Enterprise commands, and there's no `diffApply` command (https://documentation.red-gate.com/fd/commands-277578838.html). Redgate's pages sometimes show short forms such as `-source=`; use the namespaced forms below. In PowerShell, quote any argument containing `=` or a dot, as shown.
+
+> Not from Redgate docs — starting point, validate in your environment.
+
+| Step | Command |
+|---|---|
+| Capture everything | `flyway diff model "-diff.source=development" "-diff.target=schemaModel"` |
+| Capture some | `flyway diff "-diff.source=development" "-diff.target=schemaModel" "-diff.artifactFilename=<path>"`, pick ids, then `flyway model "-model.artifactFilename=<path>" "-model.changes=<id1>,<id2>"` |
+| Inspect one change | `flyway diffText "-diffText.changes=<id>"` |
+| Generate | `flyway diff generate "-diff.source=schemaModel" "-diff.target=migrations" "-diff.buildEnvironment=shadow" "-generate.types=versioned,undo" "-generate.description=<ticket-key>_<short_name>"` |
+| Self-check | `flyway diff "-diff.source=schemaModel" "-diff.target=migrations" "-diff.buildEnvironment=shadow"`, expect no differences |
+| Apply the model to your database | `flyway prepare "-prepare.source=schemaModel" "-prepare.target=development" "-prepare.scriptFilename=D__dev.sql"`, read it, then `flyway deploy "-deploy.scriptFilename=D__dev.sql" -environment=development` |
+| Empty file, right name | `flyway add "-add.description=<name>"` |
+
+`model` and `generate` read the last diff artifact written, which may belong to another comparison, so chain verbs (`flyway diff generate`) or pass `artifactFilename` when you split steps. `generate` also accepts `-generate.version`, `-generate.location`, `-generate.timestamp` and `-generate.changes`. Per the CLI reference, `model` also takes a `-dryRun` option alongside `-changes` and `-artifactFilename`; Redgate's other pages don't describe it, so confirm on your engine what it writes before you rely on it.
+
+## 8. Route 5: VS Code task buttons calling the CLI through PowerShell
+
+Redgate doesn't list a Flyway extension for VS Code on Open VSX or in its GitHub organization; check your editor's marketplace before assuming one. VS Code tasks turn the CLI loop into named buttons (Terminal, Run Task, or a key binding). Commit the file so every VS Code user gets the same steps.
+
+> Not from Redgate docs — starting point, validate in your environment.
+
+```json
+{
+  "version": "2.0.0",
+  "options": {
+    "cwd": "${workspaceFolder}/<project-folder>",
+    "shell": { "executable": "pwsh", "args": ["-NoProfile", "-Command"] }
+  },
+  "tasks": [
+    { "label": "Flyway: show dev vs model", "type": "shell",
+      "command": "flyway diff '-diff.source=development' '-diff.target=schemaModel'", "problemMatcher": [] },
+    { "label": "Flyway: capture all dev changes to model (dedicated DB only)", "type": "shell",
+      "command": "flyway diff model '-diff.source=development' '-diff.target=schemaModel'", "problemMatcher": [] },
+    { "label": "Flyway: prepare dev update from model (review D__dev.sql)", "type": "shell",
+      "command": "flyway prepare '-prepare.source=schemaModel' '-prepare.target=development' '-prepare.scriptFilename=D__dev.sql' '-prepare.force=true'", "problemMatcher": [] },
+    { "label": "Flyway: deploy reviewed D__dev.sql to dev", "type": "shell",
+      "command": "flyway deploy '-deploy.scriptFilename=D__dev.sql' -environment=development", "problemMatcher": [] },
+    { "label": "Flyway: generate migration", "type": "shell",
+      "command": "flyway diff generate '-diff.source=schemaModel' '-diff.target=migrations' '-diff.buildEnvironment=shadow' '-generate.types=versioned,undo' '-generate.description=${input:desc}'", "problemMatcher": [] },
+    { "label": "Flyway: self-check (expect no differences)", "type": "shell",
+      "command": "flyway diff '-diff.source=schemaModel' '-diff.target=migrations' '-diff.buildEnvironment=shadow'", "problemMatcher": [] },
+    { "label": "Flyway: new hand-written migration", "type": "shell",
+      "command": "flyway add '-add.description=${input:desc}'", "problemMatcher": [] },
+    { "label": "Flyway: info on dev", "type": "shell",
+      "command": "flyway info -environment=development", "problemMatcher": [] }
+  ],
+  "inputs": [
+    { "id": "desc", "type": "promptString", "description": "Description: <ticket-key>_short_name (letters, digits, underscores)" }
+  ]
+}
+```
+
+Notes: use `powershell` instead of `pwsh` where only Windows PowerShell 5.1 exists. Keep `D__dev.sql` out of Git (add it to `.gitignore`). Prepare and deploy are separate buttons on purpose, so someone reads the script in between. Never put a server name, user or password in the tasks file; connections come from `flyway.user.toml`, integrated authentication or a secrets resolver (file 10). If the project uses `${input:desc}`, accept only letters, digits and underscores, so the value can't break out of the quotes.
+
+## 9. Route 6: The Flyway MCP server in an AI tool (preview)
+
+The Flyway MCP server (preview) gives an AI agent curated tools instead of the whole CLI. It needs `[flywayDesktop] developmentEnvironment` and `shadowEnvironment` set and won't start without `-mcp.toolsets` (https://documentation.red-gate.com/fd/flyway-mcp-server-350192418.html). `develop_state` keeps the model and development database in sync; `develop_migrations` adds migration diff, generate, test and review. The example below starts a team on `develop_state`; an agent that generates and tests migrations needs `develop_migrations` instead (file 20 has both and the full tool list). In VS Code, register it in `.vscode/mcp.json` (https://documentation.red-gate.com/fd/register-with-your-ai-tools-362611558.html):
+
+> Not from Redgate docs — starting point, validate in your environment.
+
+```json
+{ "servers": { "flyway": { "command": "flyway",
+  "args": ["mcp", "-mcp.toolsets=develop_state", "-mcp.maxLogs=100"] } } }
+```
+
+The agent's loop mirrors route 1: load the project, diff development against the model, update the model, diff against migrations, generate, review the code, test-migrate on the shadow (https://documentation.red-gate.com/fd/tool-reference-362611559.html). Before a pull it can take a schema model checkpoint, so the diff afterwards separates your edits from pulled ones. The agent makes changes in the development database and captures them; it doesn't write model files by hand.
+
+Rules: dedicated development database only; a team starts with `develop_state` and moves to `develop_migrations` by pull request, while a sandbox or a developer who needs the agent to generate and test migrations uses `develop_migrations` from the start (generation and `test_migrate` exist only there); a person reads every diff and generated script before anything is applied or committed; never point the development or shadow environment at a shared, test or production database. Instruction files and guardrails are file 20.
+
+## 10. Route 7: Hand-written migrations with `flyway add`
+
+`flyway add` scans every filesystem location, takes the highest version, increments it, and refreshes the timestamp if the project uses one; `-add.type=undo` creates an undo file (https://documentation.red-gate.com/fd/add-277578864.html). The CLI reference lists the options in short form: `-type` (`versioned` by default, or `baseline`, `undo`, `repeatable`), `-description`, `-version`, `-location`, `-nameOnly`, `-force` and `-timestamp` (which accepts `auto`). Use them with the `add.` prefix, as in `-add.type` and `-add.description`, and read the add page for what `-nameOnly` and `-timestamp` do on your engine. Use it for what comparison can't infer: backfills, data moves, a column split, a rename with data preserved, online index work.
+
+Loop: create the file with `flyway add`, write the SQL, run it on your development database (or `migrate` it there), then capture the result into the model so model and migrations agree, and run the self-check (section 13). The next version comes from files on your branch only, so two branches get the same base number. The timestamp and the collision check keep them apart (file 09).
+
+## 11. Route 8: Generated in the pull request or pipeline
+
+Developers commit schema model changes only; a pipeline job generates the versioned migration from the model against a shadow and puts it in front of reviewers. Redgate documents the pattern, and the `migrations/generate` action in `red-gate/flyway-actions` runs `diff` then `generate` and can commit the result (https://documentation.red-gate.com/flyway/getting-started-with-flyway/choosing-the-right-approach-with-flyway/migrations-based-approach-generating-migration-scripts). It suits SSDT and ORM developers. The design decisions (one generator at a time, where data steps go, who reviews) are reference design D in file 28; the YAML is file 12.
+
+## 12. Regenerate a fresh script instead of hand-patching
+
+If a generated migration is wrong, or `main` moved underneath it, and no shared environment has run it, don't patch it by hand:
+
+1. Delete the migration and its undo from your branch.
+2. Merge `main`; bring your development database up to date (section 14).
+3. Redo or keep your change in the database, re-capture your objects.
+4. Generate again against the current shadow. Desktop takes the next number.
+5. Re-add only what comparison can't express (a backfill, `sp_rename`) and edit the undo to match.
+6. Self-check.
+
+Hand-patching lets the model and migrations disagree, and the next generation then "fixes" the difference with an unexpected script. If any shared environment has run the script, never edit or delete it; add a new migration.
+
+## 13. Review the generated script, then self-check
+
+A green build proves the script runs, not that it's safe. For SQL Server, in order:
+
+1. Scope: only this ticket's objects.
+2. Data loss: `DROP TABLE`, `DROP COLUMN`, a narrowed type. Read every warning.
+3. Renames: comparison can read a rename as drop and create. Redgate's page says to edit the migration to use `sp_rename`. Fix the undo to match.
+4. Splits and merges of columns or tables: write the data copy between the add and the drop.
+5. `NOT NULL` on a populated column needs a default or a backfill first.
+6. Table rebuilds and large index builds: long locks; plan a window with the DBA.
+7. Transactions: statements SQL Server won't run in a transaction come with a `.sql.conf` file carrying `executeInTransaction=false`. Commit it, keep such statements in their own small migration.
+7a. Batches: `CREATE VIEW`, `PROCEDURE`, `FUNCTION` and `TRIGGER` must be the first statement in a batch (a SQL Server rule), so a `GO` line must come before each one.
+8. Filegroups and partitions differ between environments, including on-premises versus Azure SQL.
+9. Undo: present and reviewed.
+
+Then run the self-check (section 13). It must report no differences.
+
+If you keep your development database in step by running `migrate` (section 14, option 2), mark your new migration applied there, after checking it's the only pending one:
+
+> Not from Redgate docs — starting point, validate in your environment.
+
+```powershell
+flyway info -environment=development
+flyway migrate -environment=development "-cherryPick=<new version>" "-skipExecutingMigrations=true"
+```
+
+`skipExecutingMigrations` without `cherryPick` marks every pending migration applied. Never run it against a shared environment.
+
+Static data rules are file 16, section 6. For views and procedures, a repeatable migration (`R__<description>.sql`, written as `CREATE OR ALTER`) keeps one file per object, so two teams editing the same procedure conflict visibly in Git instead of the later versioned migration silently replacing the earlier body. `generate` doesn't create repeatables; you write and keep them. Record the per-object-class choice in file 01.
+
+## 14. Pulling teammates' changes
+
+Dedicated database, from Redgate's page (https://documentation.red-gate.com/fd/pulling-in-changes-from-version-control-277580546.html):
+
+1. Save your in-flight work to the model first, so the update only shows pulled changes.
+2. Pull, and resolve conflicts (file 09, section 9).
+3. Update your database. Three options:
+   - Apply from the model with Update development (recommended). Data motion written into migrations isn't applied.
+   - `migrate` the pulled migrations. This works only with `cherryPick`, or after marking your own local migrations applied with `skipExecutingMigrations`.
+   - Reprovision from source (file 16), then reapply your in-flight work. Best if you have the infrastructure.
+
+Shared database: pull and resolve only (section 5).
+
+CLI and VS Code users: the prepare and deploy pair in section 7. MCP users: checkpoint before the pull, then update development from the model.
+
+## 15. Switching branches
+
+Redgate's options (https://documentation.red-gate.com/fd/switching-between-branches-277580705.html):
+
+- One database per branch, using the Git resolver in the development URL, for example `databaseName=<db-name>_${git.branch:ad}` in `flyway.user.toml`. Most flexible. Pair it with a provisioner so a new branch's database is created on first use (file 16).
+- One database: save first, switch, then update from the model. If you work only with migrations, Redgate's page suggests dropping and recreating the database instead.
+
+Before switching, save your work to the model and commit or stash it. A shared development database doesn't follow branches at all.
+
+## 16. The scratch loop for large features
+
+For a change that takes weeks, iterate in a disposable local copy with plain SQL files, then graduate to one migration. Twenty interim migrations would sit in every environment's history forever and multiply version clashes. Only the migration generated at graduation reaches Git.
+
+> Not from Redgate docs — starting point, validate in your environment.
+
+```powershell
+# scratch.ps1 <snapshot|reset|apply|check> [-Folder .\scratch]  (local SQL Server only)
+param([Parameter(Mandatory)][ValidateSet('snapshot','reset','apply','check')][string]$Action,
+      [string]$Folder = '.\scratch')
+$ErrorActionPreference = 'Stop'
+$server = if ($env:SCRATCH_SERVER) { $env:SCRATCH_SERVER } else { 'localhost' }
+if (@('localhost','127.0.0.1','.','(local)') -notcontains ($server -split '[\\,]')[0]) { throw "refusing: $server is not local" }
+if (-not $env:DEV_DB -or -not $env:SCRATCH_DIR) { throw 'set DEV_DB and SCRATCH_DIR first' }
+$dev = $env:DEV_DB; $scratch = "$($dev)_scratch"; $bak = Join-Path $env:SCRATCH_DIR "$dev.bak"
+function Sql($db, $query) { sqlcmd -S $server -E -C -b -d $db -Q $query; if ($LASTEXITCODE) { throw 'sqlcmd failed' } }
+function Run($db, $pattern) { Get-ChildItem $Folder -Filter $pattern | Sort-Object Name | ForEach-Object {
+    Write-Host "== $($_.Name)"; sqlcmd -S $server -E -C -b -d $db -i $_.FullName; if ($LASTEXITCODE) { throw "failed: $($_.Name)" } } }
+switch ($Action) {
+  'snapshot' { Sql master "BACKUP DATABASE [$dev] TO DISK = N'$bak' WITH COPY_ONLY, INIT" }
+  'reset'    { Sql master "IF DB_ID(N'$scratch') IS NOT NULL ALTER DATABASE [$scratch] SET SINGLE_USER WITH ROLLBACK IMMEDIATE;
+                RESTORE DATABASE [$scratch] FROM DISK = N'$bak' WITH REPLACE,
+                MOVE N'<logical-data-name>' TO N'$env:SCRATCH_DIR\$scratch.mdf', MOVE N'<logical-log-name>' TO N'$env:SCRATCH_DIR\$scratch.ldf'" }
+  'apply'    { Run $(if ($env:TARGET_DB) { $env:TARGET_DB } else { $scratch }) '0*.sql' }
+  'check'    { Run $(if ($env:TARGET_DB) { $env:TARGET_DB } else { $scratch }) '9*.sql' }
+}
+```
+
+`SCRATCH_DIR` must be a folder the SQL Server service account can write. Get the logical file names with `RESTORE FILELISTONLY`. `-C` trusts the server certificate, acceptable only because the script refuses non-local servers. Name files `010_create_tables.sql`, `020_alter_for_reporting.sql`, `900_assert.sql`: `0` files run on `apply`, `9` files on `check`. Re-run `snapshot` after every pull of main. Checks should fail loudly, for example a `THROW` when a table is empty.
+
+Graduation: pull main and update your development database; apply the final DDL to it (`TARGET_DB` set) as the migration owner, never as an admin; capture only this feature's objects; generate one migration and its undo; re-insert what the net diff can't express; self-check; confirm the version is highest (file 09); open the pull request; delete the scratch folder.
+
+## 17. New developer: first day
+
+> Not from Redgate docs — starting point, validate in your environment.
+
+```text
+[ ] GitHub access; Flyway Desktop signed in (file 04); git status, fetch and push work
+[ ] SSMS, VS Code or Visual Studio, with SQL Prompt
+[ ] Your team's route (sections 2 and 3 of this file), noted in your decision log (file 01)
+[ ] A dedicated development database and your own shadow database (file 16), or the shared
+    development database's project settings if your team uses one
+[ ] flyway.user.toml with your connections, git-ignored (file 10)
+[ ] Pull main, update your database, flyway info shows nothing unexpected
+Practice on a throwaway branch
+[ ] Add one column, capture, generate, self-check; open a pull request, read the checks, close it
+Rules from day one
+[ ] One ticket, one migration; ticket key in branch, commit and pull request title (file 30)
+[ ] Save to the model before you pull
+[ ] Never edit a migration that has run on test or later; regenerate only unshared ones
+```
+
+## 18. Flyway Desktop: what you'll see, and the prompts to read carefully
+
+What Desktop shows on the way through routes 1 to 3, and the prompts that can change a database.
+
+The Schema model page:
+
+- "Start here". From Desktop 9.8.0, the Schema model page shows a guided setup ("Start here") whenever the schema model is empty. It appears on every new or empty project, so it doesn't mean anything is broken. If your environments are already in `flyway.toml`, go to the Environments tab instead of running it.
+- Uncommitted badge. A blue badge marks objects and object groups with uncommitted changes, so you can see what still needs a commit.
+- Object level history. From the Schema model page you can view the history of one object: the commits that changed it, with author and diff. It started as an Enterprise preview and is out of preview from Desktop 9.10.7. Its "Explain this change" button uses the Desktop AI services (preview, file 20), so it follows your organization's AI setting.
+- Schema model history (preview). Recent commits across the whole schema model, filterable down to individual objects.
+- Upstream changes alert. From Desktop 9.8.3, Desktop alerts you when schema model changes exist upstream, checking when the window gets focus. Save your own work first, then pull and update your development database as section 14 describes.
+
+The Migration scripts and Deploy pages:
+
+- Migrations projects have a Deploy page for manual deployments. Use it on your own databases only; shared environments are the pipeline's job (files 11 and 12).
+- The Migration scripts page runs Migrate, Info, Validate, Check, Clean and Undo, with advanced parameters for settings Desktop honours but has no field for (for example `cleanDisabled`, `outOfOrder`, `failOnDrift`, `saveSnapshot`).
+- "View command" shows the equivalent CLI command. Use it to learn the pipeline syntax, and when something fails, to rerun the same command in a terminal with `-X` (file 23).
+- A Desktop deploy saves a snapshot to the target's snapshot history table by default, so later drift checks have something to compare against (file 14).
+- Code review panel. From Desktop 9.2.0, the Generate migrations and deployment script screens show code review results for the script, using the project's configured check engines (SQLFluff by default). It was introduced as preview, so check its label in your Desktop (file 25). From Desktop 9.3.3, an issue that has a suggested fix offers "Apply fix". Read the changed script after applying one, as you would any generated script (section 13). Rules and policies are file 13.
+
+Prompts to read before you click:
+
+- "Baseline and continue". When you deploy to a target that isn't baselined and isn't empty, Desktop offers to baseline it and continue. Accepting writes a baseline into that database's history there and then. On a shared target (test, uat, production, or a shared development database) don't accept it: it skips the deliberate checks in file 07 and hides a connection pointed at the wrong database. Cancel, and baseline deliberately as file 07 describes.
+- "Ok to erase". Clean asks you to tick "Ok to erase". Development and target connections that use a provisioner which erases the database (Backup, Snapshot or Create Database, all preview) ask for "Ok to erase and rebuild". Read the server and database name before ticking. Never tick either on a database that matters.
+- Desktop hard-codes `cleanDisabled=true` except when it re-provisions the shadow.
+
+The shadow, as Desktop uses it:
+
+- Desktop cleans or re-provisions the shadow when you visit Generate migrations. It re-provisions only when needed: a migration's checksum, name or description changed, the shadow is ahead of the scripts, the last run failed, or only repeatable migrations exist. Otherwise it applies pending migrations on top.
+- One shadow per developer per project, on the same server as that developer's development database (file 16). A shared shadow gives unpredictable results.
+- Generate without shadow is out of preview from Desktop 8.5.0. Section 1 explains why it's safe only when each migration is deployed before the next one is generated; keep the shadow for a team working in parallel.
+
+## 19. In daily use
+
+Morning: pull main, update your development database, check `flyway info`. Then your route's loop.
+
+Common questions: a capture listing objects you didn't touch means a shared database, a stale pull, or dependencies. "Already exists" on `migrate` means the mark-applied step was skipped. A self-check showing differences means the model and migrations disagree: regenerate (section 12) rather than editing by hand.
+
+## 20. Limits
+
+- Schema-model-first editing isn't Redgate's documented primary path; the comparison parser can misread a hand edit, which is why the re-capture check is mandatory.
+- Comparison can't know intent: renames, splits and backfills need your edit or `flyway add`.
+- Flyway can't tell whose change is whose in a shared development database.
+- Applying the model doesn't run data motion from migrations.
+- The MCP server is (preview); tool names and behavior can change.
+- Schema model history and the erasing provisioners are (preview). Desktop's "Baseline and continue" baselines the target on the spot, so it isn't a safe default on a shared database.
+- A generated script runs on the shadow, which doesn't prove it's safe at production volume.
+- The scratch script targets local SQL Server, not Azure SQL.
+
+## 21. Instructions for the AI assistant using this file
+
+- Before giving steps, establish the route and the development database model from the repository and the decision log (file 01), or by asking. If the project's `flyway.toml` is fresh (just created, default settings, empty `migrations/`), don't assume a route has been chosen.
+- On a shared development database, never suggest Update development, the prepare and deploy pair, `diff model` without change ids, or the MCP server's update tools against it.
+- Don't author changes in schema model files by default. Offer route 3 only on a dedicated database, with the re-capture check, and never for renames, splits or data.
+- After generating, run or ask for the self-check and report the result.
+- When reviewing generated SQL, go through section 13 in order and say which items you couldn't check from what was pasted.
+- Prefer regenerating an unshared migration to patching it. Never edit a migration that has run on a shared environment.
+- Use namespaced flags. Never invent a command; there is no `diffApply`.
+- Before someone deploys from Desktop to a target that may not be baselined, warn them about "Baseline and continue" (section 18) and point them to file 07 for a deliberate baseline. Tell them to read the database name before ticking any "Ok to erase" box.
+- If someone sees "Start here" on the Schema model page, explain that it appears whenever the schema model is empty; it isn't an error.
+- Label schema model history as (preview) whenever you mention it.
+- For the MCP server, recommend `develop_state` for a team's first step, and `develop_migrations` for a sandbox or when the agent must generate and test migrations (file 20).
+- Mark any code you add with the not-from-Redgate-docs line. Never write a password or real server name into a tasks file, `mcp.json` or script.
+- Answer in the language the person writes in. Keep commands, keys, file names and error text in English.

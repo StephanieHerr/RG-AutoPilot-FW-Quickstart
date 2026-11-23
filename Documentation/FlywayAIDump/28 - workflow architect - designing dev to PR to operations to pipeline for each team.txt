@@ -1,0 +1,354 @@
+Flyway Enterprise AI library - file 28 of 32
+Workflow architect - designing dev to PR to operations to pipeline for each team
+Flyway reference library, October 2026. Generic guidance written for your AI assistant. It contains no data from your environment, and you shouldn't add any to these files.
+
+What this covers: How your AI assistant designs a database delivery workflow with one team: development, pull request, operations hand-off and pipeline. It covers the intake (read the repository first, then ask one question at a time), the building blocks for where scripts get made, what to standardize across the organization and what each team may choose, six reference designs with diagrams, GitHub Actions jobs, approvers and failure modes, the shortcuts that turn into technical debt, how a design evolves, and how to present options and record the decision.
+
+Not in this file: Step-by-step authoring in each tool (file 08, developer workflows), version numbering and the collision check in detail (file 09), configuration and secrets (file 10), the pipeline pattern (file 11) and its GitHub Actions YAML (file 12), DBA runbooks (file 15), situation cards such as greenfield, brownfield or SSDT (file 29, scenario playbooks), ticketing and change requests (file 30), and how the assistant discovers your setup and keeps the decision log (file 01, how the assistant works out your setup).
+
+Contents:
+1. How to use this file
+2. Intake: read first, then ask one question at a time
+3. Building blocks: where scripts get made
+4. Standardize across the organization, choose per team
+5. Reference design A: small team, trunk-based, Flyway Desktop
+6. Reference design B: many teams on one shared database, release train
+7. Reference design C: DBA-gated regulated release
+8. Reference design D: hybrid, migrations generated in the pipeline from the schema model
+9. Reference design E: database per service
+10. Reference design F: mixed estate with cross-database references
+11. Anti-patterns and technical-debt traps
+12. Evolving a design over time
+13. Presenting options and recording decisions
+14. In daily use
+15. Limits
+16. Instructions for the AI assistant using this file
+
+## 1. How to use this file
+
+Design in this order, because each answer constrains the next:
+
+1. Database architecture: one database or many, cross-database references, greenfield or brownfield. This sets how many Flyway projects you need and where shadow databases must live.
+2. Development database model: dedicated or shared. This sets which pull-and-update loop is safe.
+3. Authoring: where scripts get made (section 3). Teams can differ here.
+4. Branching and versioning: trunk or release branches, and how versions avoid collisions (file 09).
+5. Standardize versus choose (section 4).
+6. Pipeline and operations hand-off (files 11, 12 and 15).
+
+Flyway takes no position on branching: Redgate's version control page says Flyway "is not opinionated about branching strategy" (https://documentation.red-gate.com/fd/version-control-273973444.html). The designs below are starting points built on documented features, not Redgate-mandated shapes. Redgate's "Choosing the right approach" page is the companion read for migrations-based versus state-based versus combined (https://documentation.red-gate.com/flyway/getting-started-with-flyway/choosing-the-right-approach-with-flyway).
+
+One rule outranks all the designs: the same reviewed script runs in every environment, and production runs only after a person approves a preview of it.
+
+## 2. Intake: read first, then ask one question at a time
+
+### Read the repository before asking anything
+
+| Look at | What it tells you |
+|---|---|
+| `flyway.toml` | Is it fresh or in use? Fresh: created by `flyway init` or Desktop, default settings, no real environments beyond placeholders, empty `migrations/`. In use: named environments, filters, `[flyway]` settings someone chose, scripts in `migrations/`. Never assume a fresh project reflects decisions the team has made |
+| `flyway.user.toml` and `.gitignore` | Whether development connections are per person (dedicated) or committed (shared) |
+| `migrations/` file names | Numbering scheme, timestamps, gaps, `B` scripts, `U` scripts, hand-written versus generated |
+| `schema-model/` | Whether the team captures state, and which schemas exist (team ownership hints) |
+| `.github/workflows/`, `ci/`, `CODEOWNERS`, branch names | Pipeline maturity, approvers, branching style |
+| Several `flyway.toml` files, three-part names, synonyms, linked server references | Several databases and cross-database dependencies |
+| `.sqlproj`, `*.publish.xml`, `.dacpac` | An SSDT team (file 06, moving off SSDT and DACPAC deployments) |
+
+### Then ask, one question at a time
+
+Ask only what the repository didn't answer. State the default you'll use if they don't know.
+
+| # | Question | Why it matters | Default if unknown |
+|---|---|---|---|
+| 1 | How many people change this database, and in how many teams? | Collision risk and where generation happens | Plan for more than one team |
+| 2 | How comfortable is the team with Git: branches, pull requests, resolving conflicts? | Tooling and branching depth | Desktop's built-in Git, short branches |
+| 3 | Does each developer have their own development database, or do they share one? | The pull-and-update loop | Recommend dedicated |
+| 4 | Who owns which schemas or objects? | Ownership rules and project split | One owner per schema |
+| 5 | How often do you release, and is it a fixed train or on demand? | Release branches, `cherryPick`, hotfix path | On demand from `main` |
+| 6 | Who must approve a production change, and is there a change request? | Gates and evidence | DBA approval through a GitHub environment |
+| 7 | What do operations need handed to them, and who runs production? | The hand-off contract (section 4) | The standard contract |
+| 8 | Which targets: on-premises SQL Server, Azure SQL Database, Managed Instance? Which GitHub plan? | Runners, authentication, shadow options, approval features | Self-hosted runners for on-premises, GitHub-hosted for Azure |
+
+Record each answer in your decision log (file 01) as you go.
+
+## 3. Building blocks: where scripts get made
+
+Every route below produces the same files: a `schema-model/` folder of one file per object and versioned, undo, baseline and repeatable scripts in `migrations/` (https://documentation.red-gate.com/fd/flyway-projects-271585108.html). That shared output is why teams can differ in authoring while the pipeline stays identical.
+
+| Route | Who and when | Fits | Guardrails |
+|---|---|---|---|
+| Flyway Desktop capture and generate | Developer, on their branch | SQL-first developers, mixed Git skill | Save to the schema model before you pull |
+| CLI (`diff`, `model`, `generate`) | Developer in a terminal | Developers who live in a terminal | Read `diffText` output, since there's no GUI dependency review |
+| VS Code task buttons running Flyway through PowerShell | Developer in VS Code | VS Code users who want one-click steps | Commit `.vscode/tasks.json`, keep credentials out of it; tasks are in file 08 |
+| Schema-model-first editing, then apply to development | Developer on a dedicated database | Narrow cases, see below | Re-capture must show no differences |
+| Generated in the pull request or pipeline (hybrid) | A pipeline job, from the committed schema model | Developers who shouldn't need Flyway tooling; SSDT or ORM teams | One generator at a time; data steps hand-written |
+| Flyway MCP server (preview) in an AI tool | Developer with an AI agent | Teams already using AI coding agents | The toolset file 20 names, a person reviews every diff and script, dev and shadow only (file 20) |
+| Hand-written with `flyway add` | Developer | Data motion, renames, splits, online index work | Save the schema model afterwards so model and migrations agree |
+| Regenerate fresh | Developer, before merge | A generated script that's wrong or stale | Only for scripts no shared environment has run |
+
+### The documented primary path
+
+Redgate's documented route is to change your development database (SSMS, SQL Prompt, any tool) and capture it into the schema model, then generate migrations from the model (https://documentation.red-gate.com/flyway/database-development-using-flyway/capturing-development-database-schema-in-version-control/tutorial-save-development-database-changes-to-the-schema-model). Schema model files are generated object scripts.
+
+### Schema-model-first: possible, with guardrails
+
+Editing object files directly, then applying them to your development database with Update development (or `prepare` then `deploy` against `development`), is possible but isn't the documented primary path. The one documented case is resolving a Git merge conflict in an object file, then applying it (https://documentation.red-gate.com/flyway/database-development-using-flyway/pulling-in-changes-from-version-control/tutorial-resolve-merge-conflicts).
+
+If a team chooses it:
+
+- Use it only with a dedicated development database. Applying the model to a shared database can undo colleagues' work (https://documentation.red-gate.com/flyway/database-development-using-flyway/pulling-in-changes-from-version-control/tutorial-apply-database-changes-from-the-schema-model-to-your-database).
+- Save or diff first. Applying overwrites unsaved development changes to the same object.
+- After applying, re-capture development to the model. It must show no differences, which proves the comparison engine parsed your edit.
+- Don't use it for renames, splits or data changes. Write those with `flyway add`.
+- Don't use it when the team is new to Git, or when the engine isn't SQL Server.
+
+### Regenerate rather than hand-patch
+
+If a generated migration is wrong, or `main` moved underneath it, and no shared environment has run it: delete it, bring your development database up to date, re-capture and generate again against the current shadow. Hand-patching a generated script lets the model and migrations disagree. If any shared environment has run the script, never edit it; add a new migration.
+
+## 4. Standardize across the organization, choose per team
+
+| Area | Standardize | Team may choose |
+|---|---|---|
+| Versioning | One timestamp-based scheme, `validateMigrationNaming = true` (file 09) | Folder per release inside `migrations/` |
+| Project layout | `flyway.toml` committed with every environment in it (credentials as `${env.X}`; only the selected environment's variables are resolved), `flyway.user.toml` ignored (file 10) | Where the project sits in the repository; optional `ci/<environment>.toml` files, loaded with `-configFiles` on top of `flyway.toml`, to scope secrets per job |
+| Required pull request checks | Build from scratch on a build database, collision check, code review, change report | Extra rules on top |
+| Pipeline stages and gates | One reusable workflow: validate, package once, test, UAT, production on demand behind approval | Trigger paths, project parameters |
+| Operations hand-off | The contract below | Notification channel |
+| Evidence | Check reports, run IDs, snapshots, ticket keys kept per release (file 17) | Extra artifacts |
+| Development database model | Dedicated by default; one shadow per developer always | Local instance, container or hosted database |
+| Authoring tool | Not standardized | Any route in section 3 |
+| Branching | Guardrails: short-lived branches, pull request to `main`, build on merge | GitHub flow or release branches, branch naming |
+
+Seed the reusable workflow from Desktop's generated GitHub Actions workflow and lift it into a central repository (https://documentation.red-gate.com/flyway/deploying-database-changes-using-flyway/automating-deployment-using-a-ci-cd-tool/tutorial-generate-a-github-actions-deployment-workflow-with-flyway-desktop).
+
+### The operations hand-off contract
+
+Whatever the team's inner loop, operations receive the same package for every production change:
+
+1. The commit SHA and the migrations package built once on merge.
+2. The check report: change report, `check -dryrun` script, code review results and drift result against the target.
+3. The ticket or change request key (file 30).
+4. The rollback position: an undo script reviewed with the change, or a stated roll-forward plan (file 14).
+5. Target databases and their order, if more than one.
+6. Post-deploy verification: `info`, drift check and the snapshot taken by `migrate`.
+
+The approver reads items 2 to 4 before approving. Nothing outside this contract reaches production.
+
+## 5. Reference design A: small team, trunk-based, Flyway Desktop
+
+Fits: one team, a handful of developers, basic Git, one database.
+
+> Not from Redgate docs — starting point, validate in your environment.
+
+```text
+dev DB (own) --save--> schema-model --generate--> V script
+   |                                               |
+   +-------- branch + pull request ----------------+
+                     |
+          pr-validate (build, checks)
+                     |
+               merge to main
+                     |
+     package -> deploy-test -> deploy-uat
+                     |
+     release-production (on demand, approval)
+```
+
+Steps: each developer changes their own database, saves to the schema model and generates a migration in Desktop, commits on a short branch named with the ticket key, opens a pull request, and merges after review and a green check. The package moves to test and UAT automatically; production runs on demand.
+
+GitHub Actions jobs: `pr-validate`, `package`, `deploy-test`, `deploy-uat`, `release-production`, `nightly-drift` (file 12).
+
+Who approves: a peer reviews the pull request; the DBA or team lead approves the production environment.
+
+Failure modes: skipping "save before pull" overwrites work on update; a shared shadow breaks generation; a hand-edited applied script fails validation.
+
+## 6. Reference design B: many teams on one shared database, release train
+
+Fits: several teams changing one large database, often split by schema (https://www.red-gate.com/hub/product-learning/flyway/supporting-monolithic-database-deployment-with-flyway/).
+
+> Not from Redgate docs — starting point, validate in your environment.
+
+```text
+team A branch --+                      +--> release branch (cut on cadence)
+team B branch --+--> PR: build + collision check + CODEOWNERS --> main
+team C branch --+                      |
+                                       +--> test (continuous)
+release branch --> uat --> production (approval, train window)
+```
+
+Steps: one project, one migration chain, timestamped versions. Each team generates on its own branch. The pull request must pass the collision check (file 09, section 6), which fails a duplicate or too-low version, and the owning team's review through `CODEOWNERS` on its schema folders. A release branch is cut on the team's cadence; a migration that isn't ready is held back with `cherryPick` on the run, never by editing files.
+
+Where generation happens is the key choice. Each developer generating on their branch is fine with one or two teams. With more, consider sharing only the schema model on branches and having one release owner generate migrations against `main` at merge, which removes parallel version chains. Both are judgment calls, not Redgate rules.
+
+GitHub Actions jobs: `pr-validate` with `version-collision-check`, `package`, `deploy-test`, `cut-release`, `deploy-uat`, `release-production`.
+
+Who approves: the owning team plus a DBA on shared objects; the release manager and DBA on production.
+
+Failure modes: a migration merged late sorts lower than one already applied and is reported Ignored; two teams alter one table in different migrations; a shared integration database becomes someone's development database. Never fix Ignored migrations with `*:ignored`.
+
+## 7. Reference design C: DBA-gated regulated release
+
+Fits: production changes need a change request, segregation of duties and evidence.
+
+> Not from Redgate docs — starting point, validate in your environment.
+
+```text
+PR (ticket key) -> pr-validate -> merge -> package (SHA)
+        -> deploy-test -> deploy-uat
+        -> prepare-release: check -dryrun -changes -drift on production (read-only account)
+        -> attach report to change request -> CAB approval
+        -> release-production: same SHA, environment approval, migrate, snapshot
+        -> verify: info, drift, close change request
+```
+
+Steps: the deployment preview runs against production with a read-only check account and is attached to the change request. Approval happens in two places that must agree: the change request and the GitHub production environment. The production job deploys the packaged SHA that was previewed. Design it to stop if `info` shows anything pending that wasn't in the preview.
+
+GitHub Actions jobs: `pr-validate`, `package`, `deploy-test`, `deploy-uat`, `prepare-release`, `release-production`, `post-deploy-verify`, with the change request gate in file 30: a ServiceNow change step, a ServiceNow or Jira Service Management deployment protection rule (GitHub public preview), or a composed API check inside `release-production`.
+
+Who approves: a DBA reviews the pull request and the preview; the change board approves the request; a named approver releases the production environment, with self-review prevented.
+
+GitHub plan matters. Required reviewers on environments in private repositories need GitHub Enterprise; on GitHub Team they work on public repositories only (https://docs.github.com/en/actions/reference/workflows-and-actions/deployments-and-environments). On Team, use a pull request into a protected `release` branch with required approvals and status checks, plus a deployment branch rule that limits `production` to `release`.
+
+Failure modes: deploying a script prepared after approval; developers holding production secrets; a preview older than the latest merge; evidence kept only in the schema history table, which `repair` can rewrite.
+
+## 8. Reference design D: hybrid, migrations generated in the pipeline from the schema model
+
+Fits: developers commit object changes (often SSDT or ORM habits) and shouldn't run Flyway tooling; the pipeline owns migrations. Redgate documents generating migrations in automation (https://documentation.red-gate.com/fd/automating-migration-script-generation-243271629.html) and ships a `migrations/generate` action that runs `diff`, `generate` and commits the result (https://github.com/red-gate/flyway-actions/tree/main/migrations/generate). Redgate's Azure DevOps "Templatized Hybrid Flow" sample shows the full shape and translates to GitHub (https://github.com/red-gate/Flyway-Sample-Pipelines/tree/main/Azure/Azure-Templatized-Hybrid-Flow).
+
+> Not from Redgate docs — starting point, validate in your environment.
+
+```text
+dev DB -> capture -> schema-model change -> PR
+   PR job: generate preview into a temp folder (not committed), show the SQL
+merge -> generate job (one at a time): migration committed by a bot -> pinned SHA
+   -> checks + deploy-test on that SHA -> PR to release -> dry run -> production
+```
+
+Steps: developers capture to the model and open a pull request. The pull request job shows the migration that would be generated, so reviewers read real SQL. On merge, a single generate job writes and commits the migration, and every later job uses that commit's SHA. Data steps, renames and splits are written by hand with `flyway add` in the pull request.
+
+GitHub Actions jobs: `pr-generate-preview`, `generate-on-merge` (concurrency group of one), `checks-test`, `deploy-test`, `promote-release`, `release-production`.
+
+Who approves: reviewers approve the model diff and the previewed SQL; DBAs approve the release pull request and production.
+
+Failure modes: generation errors surface late; two merges generating at once collide (use a concurrency group); the bot account needs a narrow branch-protection bypass, never a broad one; a developer edits a generated migration after commit.
+
+## 9. Reference design E: database per service
+
+Fits: each service owns its database, often in its own repository.
+
+> Not from Redgate docs — starting point, validate in your environment.
+
+```text
+service repo: app code + db project -> calls central reusable workflow (pinned tag)
+   PR: validate | merge: package | test | uat | production (approval)
+```
+
+Steps: the Flyway project lives in the service repository with its own chain. One team per chain makes collisions rare, so developer-side generation is fine. Every repository calls the same reusable workflow from a central repository, pinned to a tag, so gates are identical.
+
+GitHub Actions jobs: a `workflow_call` template with `pr-validate`, `package`, `deploy` per environment; each service passes its project path.
+
+Who approves: the service team reviews; production approvers are set per environment, standardized centrally.
+
+Failure modes: templates copied rather than called drift apart; services sharing an instance collide on the default history table (name it per service); a cross-service view or synonym quietly turns this into design F.
+
+## 10. Reference design F: mixed estate with cross-database references
+
+Fits: a core database plus satellites and reporting databases, with three-part names, synonyms or linked servers.
+
+> Not from Redgate docs — starting point, validate in your environment.
+
+```text
+repo/
+  db/Core/flyway.toml      (provider)
+  db/Orders/flyway.toml    (consumer: references Core)
+  db/Reporting/flyway.toml (consumer: linked server)
+release: Core -> Orders -> Reporting, each backward-compatible (expand, then contract)
+```
+
+Steps: one Flyway project per database, each with its own history. Put shadows on the same instance as the databases they reference so three-part names resolve (https://documentation.red-gate.com/flyway/flyway-concepts/environments/shadow-and-build-environments). The release deploys providers before consumers, and each change stays backward-compatible so a wrong order doesn't break anything (https://www.red-gate.com/hub/product-learning/flyway/shared-database-blue-green-deployments/). Linked server names that differ per environment go in placeholders (https://documentation.red-gate.com/flyway/reference/tutorials/tutorial-using-placeholders-in-sql-migration-scripts-for-linked-servers). Mutually dependent databases need the pattern in Redgate's article on them (https://www.red-gate.com/hub/product-learning/flyway/dealing-with-mutually-dependent-databases-in-flyway); it predates TOML configuration, so translate its syntax.
+
+GitHub Actions jobs: a matrix or ordered jobs per project (`deploy-core`, then `deploy-orders`, then `deploy-reporting`), each pointing at its own project's `flyway.toml` with `-environment` (plus that project's `ci/<environment>.toml` if the team keeps them).
+
+Who approves: one production approval covers the ordered set, so the approver sees every project's preview.
+
+Failure modes: shadow builds fail because a referenced database is missing; circular references; one project's deploy interleaved with another's out of order. Azure SQL Database doesn't support cross-database three- or four-part names, so this design applies to on-premises SQL Server and Managed Instance (file 29).
+
+## 11. Anti-patterns and technical-debt traps
+
+| Shortcut | Why it hurts later | Better alternative |
+|---|---|---|
+| Shared development database "for now" | Overwritten work, colleagues' changes committed as yours | Dedicated databases; freeze the shared one as an integration database only the pipeline deploys to |
+| Shared shadow database | Unpredictable generation as headcount grows | One shadow per developer per project |
+| Timestamps removed "for readability" | Parallel branches collide on plain numbers | Keep one timestamp scheme (file 09) |
+| `validateMigrationNaming` left at its default | A misnamed file is skipped silently | Set it to `true` |
+| `*:ignored` to turn a build green | The migration never runs anywhere | Fix the order; a reviewed one-off `-outOfOrder=true` run |
+| `repair` in a pipeline | Validation can never fail; history stops being evidence | A person runs `repair` after diagnosis, once per environment and only in the cases files 14 and 22 allow, never from a pipeline |
+| Migrations rebuilt per environment or deployed from a branch | What ran in production isn't what was tested | Package once, deploy that SHA everywhere |
+| Procedures dropped and recreated in versioned scripts | Every bug fix costs a new version forever | Repeatable migrations for programmable objects |
+| `baselineOnMigrate` left on in committed config or action inputs | Masks a wrong-target connection by baselining it | Baseline once, deliberately, per brownfield target; check the deploy action's input default (file 12) |
+| Hand-patching generated scripts | Model and migrations disagree | Regenerate fresh (section 3) |
+| One person's laptop generates for everyone | A single point of failure | Design D, or every developer generates |
+| Copied pipeline YAML per team | Gates drift apart | One reusable workflow |
+| An AI agent pointed at shared or production databases | Preview tools act on the wrong target | Dev and shadow only, a person reviews every script (file 20) |
+
+## 12. Evolving a design over time
+
+Designs should change as the team does. Common moves, each a decision for your decision log (file 01):
+
+| Signal | Move | How, without breaking anything |
+|---|---|---|
+| Collisions or Ignored migrations after merges | Design A to design B | Turn on the collision check first, then `CODEOWNERS`, then a release branch |
+| Developers resist Flyway tooling | Add design D for that team | Pilot on one team; keep the same package and gates |
+| Shared development database pain | Move to dedicated | Capture the shared database to the model, provision personal databases from it, move connections into `flyway.user.toml` |
+| A new auditor finding | Add design C gates | Add `prepare-release` and the change request link before changing approvers |
+| Shadow builds getting slow | Rebaseline with a `B` script at a release point | Existing environments ignore it; new ones start from it (https://documentation.red-gate.com/flyway/flyway-concepts/migrations/baseline-migrations) |
+| Changing the numbering scheme | Switch once, upward | Every new version must sort above the highest existing one (file 09) |
+
+Change one thing at a time, prove it on `test`, and record why.
+
+## 13. Presenting options and recording decisions
+
+Present two or three options, never one, and never more than three. For each give: what it is, what it fits, what it costs, and the failure mode. Say which you recommend and why, tied to the intake answers. Mark judgment as judgment.
+
+Then write the decision into your decision log (file 01):
+
+> Not from Redgate docs — starting point, validate in your environment.
+
+```markdown
+## Decision: <short title>
+- Date: <yyyy-mm-dd>
+- Team or project: <team>
+- Decided: <option chosen>
+- Options considered: <A>, <B>, <C>
+- Why: <intake answers that drove it>
+- Standard areas affected: <versioning / checks / gates / hand-off / none>
+- Revisit when: <signal from section 12>
+```
+
+A team-level choice never overrides an organization standard from section 4. If a team needs an exception, record it as an exception with an owner and an end date.
+
+## 14. In daily use
+
+People ask: "Design our workflow" (run section 2, then propose from sections 5 to 10). "Can our team use VS Code instead of Desktop?" (yes, same files, section 3). "Should we let developers skip migrations?" (design D). "We have a new team joining the shared database" (design B checks, `CODEOWNERS` update). "Our GitHub plan can't do required reviewers" (design C, section 7 workaround). "What does operations need from us?" (the hand-off contract).
+
+## 15. Limits
+
+- Flyway doesn't enforce a branching strategy, schema ownership or a release cadence; the pipeline and GitHub settings do.
+- Flyway has no built-in check for versions below `main`; the collision check in file 09 fills the gap.
+- Schema-model-first editing isn't the documented primary path; the guardrails in section 3 are judgment.
+- The Flyway MCP server is in preview; tool names can change.
+- Required reviewers on private repositories need GitHub Enterprise.
+- Cross-database ordering is the pipeline's job; Flyway deploys one project at a time.
+
+## 16. Instructions for the AI assistant using this file
+
+- Read the repository before asking anything. Decide whether `flyway.toml` is fresh or in use, and never assume a fresh project reflects decisions the team made.
+- Ask at most one question at a time, only what the repository didn't answer, and state the default you'll use.
+- Present two or three options with fits, costs and failure modes; recommend one and say why.
+- Keep organization standards (section 4) fixed; let teams choose authoring tool, development database hosting and branching flavor within limits.
+- Describe the documented primary path (change the development database, then capture). Offer schema-model-first only with its guardrails.
+- Never suggest editing a migration a shared environment has run, `*:ignored`, automated `repair`, or `baselineOnMigrate` in committed config.
+- Production is always on demand, one tested package, behind a human approval. Never design an AI agent or automation that deploys without a person in the loop.
+- Check the GitHub plan before relying on required reviewers.
+- Record every decision in the team's decision log (file 01) using the section 13 template.
+- Mark every diagram, YAML, TOML and script you write as composed, and point to file 12 for workflow syntax.

@@ -1,0 +1,286 @@
+Flyway Enterprise AI library - file 23 of 32
+Troubleshooting - install, Desktop, CLI, Git, runners and connectivity
+Flyway reference library, October 2026. Generic guidance written for your AI assistant. It contains no data from your environment, and you shouldn't add any to these files.
+
+What this covers: The file to open when the tooling misbehaves rather than a migration. Symptom, likely cause, check and fix tables for install, sign-in and licensing, Flyway Desktop and Git, the CLI and PowerShell, SQL Server connectivity, Azure SQL, GitHub Actions runners, comparison noise, timeouts and locks, how to capture debug output and what to send Redgate Support, Azure DevOps pipelines, and the Flyway MCP server (preview).
+
+Not in this file: failed migrations, checksum errors, drift and recovery, and the error code and message index (file 22), installing and licensing from scratch (file 04), `flyway.toml` and secrets (file 10), workflow design (file 12), registering the MCP server and choosing a toolset (file 20).
+
+Contents:
+1. First checks: five facts
+2. Install, sign-in and licensing
+3. Flyway Desktop and Git
+4. The CLI
+5. SQL Server connectivity
+6. Azure SQL
+7. GitHub Actions runners
+8. Comparison noise
+9. Timeouts and locks
+10. Debug output and what to send Redgate Support
+11. Azure DevOps pipelines
+12. The Flyway MCP server (preview)
+13. In daily use
+14. Limits
+15. Instructions for the AI assistant using this file
+
+## 1. First checks: five facts
+
+Collect these before trying a fix.
+
+1. The exact error text, copied.
+2. The exact command, workflow step, or Desktop page and button.
+3. Where it ran: a workstation, or a runner (which `<runner-label>`).
+4. `flyway --version` from that same place. If it says Community (what Flyway reports when no Enterprise license applies), licensing is the problem whatever the error says. From engine 12.6.0 the line after "Licensed via:" names how the license was acquired;`flyway version -outputType=json` also gives `edition` and `permitExpiry`.
+5. Whether it worked anywhere else (another laptop, another runner, SSMS).
+
+Then rerun with `-X` and `-outputFile=<path>` (section 10). The Desktop installer puts its own CLI on the PATH, so `flyway` on a workstation can be a different version from the runner's. Compare versions before comparing behavior.
+
+## 2. Install, sign-in and licensing
+
+| Symptom | Likely cause | Check | Fix |
+|---|---|---|---|
+| Desktop shows Community, not Enterprise | No license allocated to that Redgate ID | Ask the license admin to check the Redgate portal | Allocate "Desktop tools", then sign out and in |
+| Desktop is Enterprise, the CLI says Community | The license has two parts: Desktop tools and Flyway Engine | `flyway --version` | Allocate Flyway Engine; then `flyway auth -IAgreeToTheEula` once on the workstation |
+| `flyway auth` hangs or fails | It needs a browser; Redgate says it doesn't work over WSL or SSH | Where are you running it? | Use a token (`FLYWAY_EMAIL`, `FLYWAY_TOKEN`) or an offline permit instead |
+| Runner reports Community; checks fail or are skipped. Enterprise-only commands stop with "Upgrade required: ... is not supported by ..." and exit code 35, while optional Enterprise behavior quietly doesn't happen | `FLYWAY_EMAIL` or `FLYWAY_TOKEN` not passed to that step or job (in Azure DevOps, section 11) | First job step: `flyway --version -outputType=json` | Pass both from secrets to every step or job that runs Flyway (file 04, section 7) |
+| "Flyway permit on disk is outdated ..." or "Flyway permit on disk is expired ... Please rerun auth" on a workstation | The workstation's engine was upgraded to 13.6.0 or later from an earlier one, which needs `flyway auth` once more, or the stored permit has no refresh token | `flyway --version` | `flyway auth -IAgreeToTheEula` once on that workstation. Runners use a token or an offline permit, never `auth` |
+| Token stopped working | Token revoked or replaced, or the account lost its Flyway Engine allocation | Sign in to identityprovider.red-gate.com/personaltokens as the CI account | Create a new token, update the GitHub secret, confirm the allocation |
+| Moved from offline permit to token, still uses the permit | An offline permit takes precedence over a token | Is `FLYWAY_OFFLINE_PERMIT_PATH` (or TOML `offlinePermitPath`) still set? | Remove the setting and the file |
+| Air-gapped runner set up with Desktop's permit variable | The CLI reads `FLYWAY_OFFLINE_PERMIT_PATH`, not `REDGATE_LICENSING_PERMIT_PATH` | `printenv` | Download the CLI permit (file 04) and set `FLYWAY_OFFLINE_PERMIT_PATH` |
+| Licensing fails behind a firewall or proxy | Licensing hosts blocked, proxy not configured, or TLS inspection | File 04, section 6, then rerun with `-X` | Allow the hosts by DNS name; set the proxy (file 04, section 6); or use an offline permit |
+| "ERROR: Couldn't read app data Flyway permit" (reported in practice), with `-X` showing "Failed to fetch permit from PAT token licensing: PKIX path building failed: ..." | A proxy doing TLS inspection with a corporate root CA that Flyway's Java doesn't trust, licensing hosts blocked, or an app data folder Flyway can't write to | The `-X` output; whether the account running Flyway can write to its app data folder (section 12 lists it) | Add the CA to a truststore passed in `JAVA_ARGS` (section 5, PKIX row); allow the licensing hosts (file 04, section 6); fix the folder's permissions. Air-gapped: an offline permit |
+| The open-source build was installed ("Invalid flag: init" is one sign), or the permit or license expired ("Your ... license has expired and is no longer valid") | Redgate-only commands are rejected, or the edition drops to Community | `flyway --version` | Install the Redgate download or `redgate/flyway`; replace an expired permit |
+
+## 3. Flyway Desktop and Git
+
+| Symptom | Likely cause | Check | Fix |
+|---|---|---|---|
+| Can't clone from github.com:443 in Desktop | Corporate proxy or TLS inspection blocks Desktop's Git | `git fetch` in a terminal | Clone with GitHub Desktop or the Git CLI, then in Desktop click **Open project...** and select the folder holding `flyway.toml` |
+| Project files fail to save or read oddly | Project inside a OneDrive folder | The project path | Move the project out of OneDrive (Redgate's "Projects in OneDrive" page) |
+| "The Git command line is not available" | Git missing, older than 2.30.0, or not on the PATH | `where.exe git`, `git --version` | Install Git, fix the PATH, restart Desktop |
+| Behavior differs between terminal and Desktop | Two Gits on the PATH | `where.exe git` prints more than one path | Remove one; restart Desktop |
+| Desktop sign-in loops, or the browser doesn't open to sign in | The browser can't be launched from Desktop, or a firewall blocks red-gate.com or the licensing hosts | Does red-gate.com open in a browser on that machine? | From Desktop 9.5.3, copy the sign-in link and open it in a browser yourself. Allow red-gate.com and the licensing hosts (file 04, section 6) |
+| "Running git push failed: fatal: 'origin' does not appear to be a git repository" (reported in practice) | The local repository has no remote named `origin` | `git remote -v` | Add the remote (`git remote add origin <repository-url>`), then push again |
+| Push rejected in Desktop | The remote has commits you don't have yet | Desktop's version | From Desktop 9.5.10, use "Pull changes", then push again |
+| Push goes to or expects the wrong branch | Default branch name doesn't match the remote | `git branch --show-current`, `git remote show origin` | Rename the local branch to match; set `init.defaultBranch` |
+| Repeated credential prompts or "authentication failed" | A cached HTTPS token and an SSH remote, or an expired token | `git remote -v`, `git config --show-origin --get-all credential.helper` | Pick one method: Git Credential Manager for HTTPS, or ssh-agent for SSH |
+| Desktop can't connect to the shadow database | Account can't create schemas, or server not reachable | Test in SSMS, then section 5 | Grant the right, or pre-create the schemas with the same casing |
+| Desktop won't start, or reports "Failed to parse the response from the flyway CLI as json", "Failed to parse result '' as json: Unexpected end of JSON input" or "Invalid file descriptor to ICU data received" (reported in practice) | A corrupted install or half-applied auto-update, or endpoint protection quarantining the bundled Java runtime or CLI | Desktop logs (below); does Desktop's bundled CLI run from a terminal? | Clean reinstall: uninstall, delete `C:\Program Files\Red Gate\Flyway Desktop` and `%localappdata%\Temp\Redgate\Flyway Desktop\updates`, reinstall. If it recurs, Redgate Support with the logs |
+| "ERROR: Failed to configure parameters: ... Environment 'development' not found. Check that this environment exists in your configuration." (reported in practice), or Desktop asks for connection details every time | `flyway.toml` or `[flywayDesktop]` names an environment that isn't defined, for example one that exists only in another person's `flyway.user.toml` | Compare `[flywayDesktop] developmentEnvironment` and `shadowEnvironment` with the `[environments.*]` blocks | Define the environment in `flyway.toml` with a URL and no credentials, then set the login in Desktop's Environments tab, which keeps it in the git-ignored `flyway.user.toml` (file 10) |
+| "Unable to get local secret" then "Caused by: Error reading secret: Element not found." (reported in practice) | `${localSecret.X}` values are stored per machine, so a project copied from another machine can't read them | Was the project copied or cloned from elsewhere? | Re-enter the login in Desktop so it re-creates the local secret |
+| `COMPARISON_ENGINE_UPDATE_REQUIRED` from the CLI or a runner on a project Desktop saved | Desktop's engine is newer than the CLI that reads the project | `flyway --version` against Desktop's About page | Update the CLI to at least Desktop's engine version (file 04; current versions in file 25) |
+| An object shows "--No text is available" in the schema model | The object is encrypted, or the account can't read its definition (Redgate KB) | Which account does Desktop connect as? | Grant `VIEW DEFINITION` (or a role that includes it); encrypted objects need `sysadmin` to compare |
+| Objects missing from the schema model | A filter excludes them (on SQL Server, users and certificates are excluded by default), a `_` in a filter expression matches any character, or the account can't see them | `Filter.scpf`; Desktop's "View command" rerun with `-X` | Adjust the filter in Desktop's filter editor, write `[_]` for a literal underscore, grant `VIEW DEFINITION` |
+| A filter shows read-only in Desktop's filter editor | The filter was imported from a file and uses expressions the editor doesn't support | Where the filter file came from | Expected for unsupported expressions. To change it in Desktop, rebuild the filter in the editor, then commit it |
+| "Error running flyway diff Failed to find parameter Schemas." (reported in practice; no confirmed fix yet) | Not known | Desktop's verbose log; Desktop's "View command" rerun with `-X`; the environment's `schemas` setting | No published fix. Send the logs and the `-X` output to Redgate Support (section 10) |
+| Changes you just pulled don't show in Desktop's comparisons | The comparison was made before the pull | When the comparison last ran | From Desktop 9.8.3, Desktop checks for upstream changes when its window gets focus. Refresh the comparison after pulling |
+
+Desktop logs: `%USERPROFILE%\AppData\Local\Red Gate\Logs\Flyway Desktop`, with a link to the folder in Settings. Set logging to verbose in Settings first; from Desktop 8.5.13 verbose also captures the CLI's debug logs. From Desktop 9.10.3, logs older than a month are deleted at start-up unless you change Settings > Log retention.
+
+To tell a Desktop problem from an engine problem, use Desktop's "View command" to copy the CLI command it ran, then rerun it in a PowerShell terminal from the project folder with `-X`. Only rerun a read-only command such as `info` or `validate`, or one aimed at your own development or shadow database; never use it to deploy to a shared environment by hand.
+
+## 4. The CLI
+
+| Symptom | Likely cause | Check | Fix |
+|---|---|---|---|
+| "compiled by a more recent version of the Java Runtime" | The install has no `jre` folder, so the launcher falls back to an older `JAVA_HOME` or `java` | Does `<flyway-folder>\jre` exist? Is `FLYWAY_JAVA_CMD` set? | Reinstall the platform archive, or point Flyway at Java 17 or later (the launcher prefers `FLYWAY_JAVA_CMD`, then `jre`, then `JAVA_HOME`) |
+| `flyway` not recognized, or the wrong version runs | Folder not on the PATH, or Desktop's CLI shadows the archive | `where.exe flyway`; `flyway --version` | Fix PATH order; pin one version (file 04) |
+| Config or `flyway.toml` not found | Wrong working directory | The message reports the directory | Run from the project folder, or pass `-workingDirectory=<path>` |
+| In Docker, config not found | Project not mounted at `/flyway/project` | The `-v` path must be absolute | `-v /abs/path:/flyway/project ... -workingDirectory=project` |
+| `${env.X}` shows unresolved | The variable isn't set in that step's environment, or the name differs (Linux is case sensitive) | `printenv X`; `$env:X` | Map the secret to the exact name under the step's `env:` |
+| "Unable to resolve environment variable: '<NAME>'" | The selected environment references `${env.<NAME>}` and that variable isn't set in this shell or step. Only the selected environment's variables are resolved: an unset variable in an environment you didn't select doesn't fail the command on a current engine, so one shared `flyway.toml` with every environment works. Not tested: placeholders and `[flyway]`-level settings that reference an unset variable | `$env:<NAME>` in PowerShell, `printenv <NAME>` on Linux; which `-environment` was passed? | Set the variable for that step (map the secret under `env:`), or pass the environment you meant with `-environment=<name>` |
+| "Unable to connect to the database. Configure the url, user and password!", or "Unable to obtain connection" with no sign of your settings | No config was loaded: the wrong working directory, no `-environment` (it defaults to `default`), or a `.conf` file next to `flyway.toml` (with both, only the TOML loads, reported in practice) | The working directory; the command's `-environment` | Run from the project folder or pass `-workingDirectory=<path>`; pass `-environment=<name>`; convert a `.conf` project to TOML (opening it in Desktop upgrades it and keeps a backup; file 10) |
+| "Unknown configuration property" | A misspelled key, or a key newer than the installed engine | `flyway --version`; the key's spelling against file 10 | Fix the spelling, or update Flyway (file 04). Don't delete settings just to make the message go away |
+| JDBC URL with `;` fails in PowerShell | PowerShell treats `;` as a separator | The URL is cut at the first `;` | Quote it: `-url='"jdbc:sqlserver://...;databaseName=..."'` (Redgate's Command-line page) |
+| "ERROR: Invalid argument: -check" (or another dotted name), or "Invalid flag" | PowerShell splits an unquoted argument that contains a dot, or quoting split a parameter from its value | The command as typed | Quote each namespaced argument whole: `"-check.buildEnvironment=build"`, `"-check.failOnDrift=true"` |
+| A Windows PowerShell 5.1 script throws before it reads `$LASTEXITCODE` | Redirecting native stderr (`2>&1`) under `$ErrorActionPreference = 'Stop'` turns Flyway's stderr into a terminating error | `$PSVersionTable.PSVersion`; the redirect and the preference in the script | Drop the redirect, or relax the preference around the Flyway call, then test `$LASTEXITCODE` |
+| A script treats a failure as success, or retries wrongly, after an engine upgrade | It tests `$LASTEXITCODE -eq 1`. From engine 12.9.0 some failures return a distinct exit code derived from the error code, with no published mapping | The script's exit-code test | Treat any non-zero exit as failure and branch only on 35 (licensing); read `error.errorCode` from `-outputType=json` for detail (file 22, section 7) |
+| `Unable to calculate checksum` with `MalformedInputException` | The script was saved as UTF-16 (SSMS's default for new scripts) | Open the file in an editor that shows encoding | Re-save as UTF-8; if it has already run anywhere, see file 22, card 14 |
+| A mistyped `locations` path "succeeds" with nothing to do | `failOnMissingLocations` defaults to `false` (its setting page) | `flyway info` lists no migrations | Set `failOnMissingLocations = true` under `[flyway]` in `flyway.toml`. Messages: "Skipping filesystem location:" or "No migrations found. Are your locations set up correctly?" |
+| "Unable to resolve location <location>." | A relative `locations` path resolved from the wrong working directory (common on runners), or a Docker mount path that differs | The working directory in the message (missing-location messages show the effective working directory from engine 12.10.0) | Run from the project folder or pass `-workingDirectory=<path>`; use `locations = ["filesystem:migrations"]` |
+| Warning "<n> SQL migrations were detected but not run because they did not follow the filename convention." (reported in practice) | Files misnamed, for example a single underscore (`V1_desc.sql`) | The file names in `migrations/` | Rename them only if they've never run anywhere. Set `validateMigrationNaming = true` so a bad name fails the run instead of being skipped |
+
+> Not from Redgate docs — starting point, validate in your environment.
+```powershell
+# Exit-code handling for a Flyway step: any non-zero is a failure; 35 is licensing.
+flyway info -environment=development
+$code = $LASTEXITCODE
+if ($code -eq 35) { throw "Flyway licensing failed (exit 35): check the edition and sign-in" }
+if ($code -ne 0) { throw "Flyway failed (exit $code)" }
+```
+
+`JAVA_ARGS` passes JVM options to Flyway, for example `-Xmx` to give it more memory. For help, `flyway -h` (also `--help` or `-?`); from engine 12.11.0 help for `migrate`, `info`, `validate`, `clean` and `undo` lists the parameters relevant to that command. `flyway list-engines` (add `-outputType=json` for JSON) lists the supported databases.
+
+## 5. SQL Server connectivity
+
+Start with `flyway testConnection -environment=<name>` from the machine that fails. It changes nothing.
+
+| Symptom | Likely cause | Check | Fix |
+|---|---|---|---|
+| Connection refused or timeout | TCP/IP disabled on the instance, wrong port, or a firewall | SQL Server Configuration Manager; `Test-NetConnection <server> -Port 1433` | Enable TCP/IP and restart the service; open the port end to end |
+| Named instance not found | SQL Server Browser stopped or UDP 1434 blocked | Is Browser running? | Start it, or put the instance's port in the URL. With `instanceName` and a port together, the driver connects to the port (Redgate's SQL Server page) |
+| Certificate error, for example "Failed to validate the server name in a certificate", "The driver could not establish a secure connection to SQL Server by using Secure Sockets Layer (SSL) encryption", or "The server certificate is not trusted" (sub-code `UNTRUSTED_CERTIFICATE`) | Microsoft's driver encrypts and validates the certificate by default; this is the driver's behavior, not Flyway's, so your existing JDBC TLS guidance applies | Is the CA trusted by Flyway's Java? Does the URL's server name match the certificate? | Use the certificate's name in the URL, add the CA to a truststore (`trustStore`), or set `hostNameInCertificate` (Redgate's SSL troubleshooting page) |
+| "PKIX path building failed ... unable to find valid certification path to requested target", on a database connection or on licensing | Flyway's Java doesn't trust the CA, often because a proxy does TLS inspection with a corporate root CA | `-X` output; does it start right after an engine upgrade? | Add the CA to a truststore and pass it with `-Djavax.net.ssl.trustStore=...` in `JAVA_ARGS` (file 04, section 6). From engine 13.11.1 the bundled Java runtimes and Docker images block distrusted CAs, so an error that starts after that upgrade may mean the chain ends at one of them |
+| It works only with `trustServerCertificate=true` | That turns off certificate validation, though the `UNTRUSTED_CERTIFICATE` message suggests it | Which environment? | Only for a disposable development database; shared environments keep validation |
+| `integratedSecurity=true` fails on a Linux runner, or "... To setup integrated authentication see ..." (sub-code `INTEGRATED_AUTH_NOT_SUPPORTED`) | The default integrated mode (`NativeAuthentication`) uses a Windows DLL | The OS of the runner | Use Kerberos (below), Entra ID for Azure SQL, SQL authentication, or a Windows runner |
+| Integrated login fails on a Windows runner | Integrated authentication uses the account running Flyway; the runner service runs as another account | Which account runs the runner service? Is the machine domain-joined? | Run the service as a domain service account that has the SQL login (Redgate's Windows integrated authentication tutorial) |
+| Error names `mssql-jdbc_auth` or "native" authentication | Integrated login on Windows loads `mssql-jdbc_auth-<version>-<arch>.dll`, which the Windows CLI package ships in its `native` folder | Does `native` hold the DLL matching the `mssql-jdbc` jar in `drivers`? A copied install or another tool's DLL is the usual cause | Reinstall the CLI rather than copying DLLs; on Linux runners use `authenticationScheme=JavaKerberos` |
+| Kerberos login fails | Wrong `krb5.conf`, keytab or login config; clock skew; KDC unreachable; short server name. In Desktop, comparison (advanced) features with Kerberos need Desktop 9.3.0 or later | `klist`; Desktop's About page | Use both `integratedSecurity=true` and `authenticationScheme=JavaKerberos`, the fully qualified server name, `kerberosConfigFile` and `sqlserver.kerberos.login.file`; fix the clock. Update Desktop to 9.3.0 or later |
+| Login failed for the user | Wrong password, no database user, or no rights on that database | Log in with SSMS as the same account | Create the user; grant rights (file 04, section 5) |
+| `testConnection` passes, `check` fails | The check account lacks metadata or history rights | Compare results run as the check and deploy accounts | Grant `VIEW DEFINITION` and `SELECT` on the history table (file 04, section 5) |
+
+Kerberos needs a reachable KDC, `krb5.conf` and a ticket or keytab (Redgate's tutorial); a custom Docker image also needs `libgssapi-krb5-2`.
+
+## 6. Azure SQL
+
+| Symptom | Likely cause | Check | Fix |
+|---|---|---|---|
+| Error 40615, or a message that the client IP address isn't allowed to access the server | No firewall rule for the caller | The caller's public IP as Azure sees it (NAT changes it) | Add a server-level or database-level rule. Microsoft says changes can take up to five minutes; `DBCC FLUSHAUTHCACHE` in the database refreshes them sooner |
+| Error 40613 on the first connection, then a retry works | A serverless Azure SQL database was auto-paused and is resuming | Is the database on the serverless tier? | Retry, or set `connectRetries` for that environment; or use a provisioned tier or local shadow where the pipeline connects first |
+| Works from an Azure VM, not from the runner | "Allow Azure services" admits Azure services, not your on-premises runner | Where does the runner sit? | Add its egress IP, or use a private endpoint |
+| Login to the private IP or the `privatelink` name fails | By design: the endpoint routes through the SQL gateway | The URL | Use `<azure-sql-server>.database.windows.net` |
+| The name resolves to a public IP from the runner | Private DNS isn't wired to the runner's network | `nslookup <azure-sql-server>.database.windows.net` | Fix private DNS; confirm "Deny public network access" is intended |
+| Private endpoint works for 1433 only, or is slow | Redirect policy needs ports 1433 to 65535 open | Connection policy setting | Open the range, or use Proxy policy |
+| Entra login fails: "login failed" for a principal | The database user doesn't exist | Connect as an Entra admin | `CREATE USER [<name>] FROM EXTERNAL PROVIDER`; grant rights |
+| Entra fails for everyone | The server has no Microsoft Entra admin | Server settings | Set an Entra admin (Redgate's tutorial requirement) |
+| Service principal login fails | Secret expired, wrong client or tenant ID, `user` isn't the client ID, or no database user | The environment's `url`, `user` and secret | `authentication=ActiveDirectoryServicePrincipal`, `user = "<client-id>"`, password from `${env.X}` (Redgate's Entra tutorial) |
+| Managed identity login fails on a runner | Microsoft's driver uses managed identity only from inside an Azure resource | Is the runner an Azure VM with an identity assigned? | On-premises runners: use a service principal. User-assigned identity: add `msiClientId=<client-id>` to the URL |
+| Token error with `accessToken` | Wrong audience, or the token expired. Or `jdbcProperties.accessToken` was lost because placeholders are set (reported in practice, GitHub issue 3884) | Token scope; does the project set placeholders? | Request it for `https://database.windows.net/` in the same job that runs Flyway. With placeholders, pass it on the command line instead: `"-environments.<env>.jdbcProperties.accessToken=<token>"`, with `<token>` read from the step's secret variable, never written into a committed file |
+| "... You need to install some extra drivers in order for interactive authentication to work." (sub-code `INTERACTIVE_AUTH_DRIVERS_MISSING`) | The Entra libraries the chosen authentication mode needs aren't present | Which `authentication=` mode is in the URL? Is the CLI a complete Redgate install? | Check the mode and its driver requirements in file 10; reinstall the CLI rather than copying files between installs |
+| Desktop interactive sign-in fails | The app registration lacks redirect URIs or `user_impersonation` | Redgate's Entra tutorial | Add `http://localhost` and the native client URI; add the Azure SQL Database delegated permission |
+
+## 7. GitHub Actions runners
+
+| Symptom | Likely cause | Check | Fix |
+|---|---|---|---|
+| Job never starts | Runner offline, or label doesn't match `runs-on` | Runner status; `<runner-label>` | Fix the label; restart the service |
+| Can't reach on-premises SQL Server | A GitHub-hosted runner is outside your network | Where does the job run? | Self-hosted runner inside the network (file 04, section 8) |
+| License steps fail for pull requests from forks | GitHub passes no secrets to fork-triggered workflows | Is the PR from a fork? | Give contributors branch access in the main repository |
+| `setup-flyway` fails on inputs | `edition` and `i-agree-to-the-eula` are required | The workflow | `edition: enterprise`, `i-agree-to-the-eula: true`, `email` and `token` from secrets, and pin `version` |
+| Flyway licensing fails on a self-hosted runner behind a proxy | The proxy isn't passed to Flyway's Java runtime | Rerun the Flyway step with `-X`; it logs the proxy detected | Set `JAVA_ARGS` proxy properties on Linux runners, or `FLYWAY_USE_SYSTEM_PROXIES=true` on Windows (file 04, section 6). With system proxies on, the Windows WPAD/PAC lookup adds about 90 to 100 ms to each run |
+| Production job doesn't wait for approval | No reviewer on the environment, name mismatch, or admin bypass allowed | Environment settings; the `environment:` value | Add required reviewers; fix the name (a nonexistent environment is created with no rules); turn off admin bypass |
+| Approval rules are set but never applied, with no error | On GitHub Free, Pro or Team, required reviewers, wait timers and admin-bypass blocking apply only to public repositories, so a private repository's gate is silently skipped | GitHub plan and repository visibility | GitHub Enterprise; or on Team, a protected release branch with required approvals and checks, with production restricted to that branch (file 12) |
+| A Redgate action step fails at once on a Windows runner with a path error | The actions run under `shell: bash`, which on Windows can resolve to WSL's bash | `where.exe bash` | When `runner.os == 'Windows'`, add `C:\Program Files\Git\bin` and `C:\Program Files\Git\usr\bin` to `$GITHUB_PATH` first, as Redgate's sample workflows do |
+| On GitHub Enterprise Server, report uploads fail | GitHub says the newer artifact actions, which Redgate's actions use, aren't supported on Enterprise Server | The upload step's log | Run `flyway check` and `migrate` as CLI steps (Redgate's `flyway-cli` samples) and upload with the artifact action your server supports (file 25) |
+| Environment secret is empty | A job reaches environment secrets only after its rules pass | The job's `environment:` key | Add the key to that job |
+| Checks run, but no changes report, and the job stays green | With no build inputs, `migrations/checks` provisions a Docker build database, which for SQL Server needs `build-docker-i-agree-to-the-db-vendors-eula: true` and a runner that can run Linux containers. Without either, the report is skipped with a warning, not failed | The job summary's warnings | On a Windows or locked-down runner, set `build-environment` to an empty build database you own |
+| `check` fails with `PLUGIN_CHECK_MISSING_BUILD_TARGET`, or `CHECK_BUILD_NO_PROVISIONER` ("ERROR: Clean is disabled - unable to configure clean provisioner") | `check -changes` has no build environment or deployed snapshot, `check -drift` has no build environment or next snapshot, or the build environment has no provisioner and clean is disabled | The step's `-check.buildEnvironment` and the build environment's settings | Name a build environment you own; give it a `clean` provisioner, or `cleanDisabled = false` on that build environment only (file 13). An inline `check.buildUrl` supports only the `cleanDisabled` route, not a provisioner. Never share one build database between parallel runs |
+| "ERROR: RGCompare exited with code 127" on a Linux runner (reported in practice) | A custom or stripped Docker image without the .NET runtime dependencies the comparison engine needs (`libicu`, `libssl3`, `libstdc++6`, `zlib1g`, `liblttng-ust1`, `libunwind8`; the .NET version is in file 25), or an unsupported OS such as RHEL 7 | The image and OS the job runs on | Use the official `redgate/flyway` image, or install the documented packages in your image (file 04); run on a supported distribution |
+| Deploy ran although the drift or code check failed | The gate and the deploy were chained in one command; `check -drift` with `failOnDrift` and `check -code` with `failOnError` don't stop later verbs in the same command | The step's command line | One gate per step, with the deploy in a later step (file 22, card 5) |
+| Code scanning upload missing | The upload step uses GitHub code scanning and continues on error, so the job stays green | The action's step log | Grant the job `security-events: write` and enable code scanning for the repository, or set `skip-code-scanning-upload: true` |
+
+For more detail, set the `ACTIONS_STEP_DEBUG` secret or variable to `true` (GitHub's debug logging page) and add `-X` to the Flyway command.
+
+## 8. Comparison noise
+
+| Symptom | Likely cause | Check | Fix |
+|---|---|---|---|
+| Differences nobody made after cloning on Windows | Git rewrote line endings | `git status` after a clean clone | Add `.gitattributes`, then `git add --renormalize .` once |
+| Collation differences | Column collations are ignored by default (`ignoreCollations` is true); a database-level difference isn't | Is the option changed? | Standardize collations, or set `[redgateCompare.sqlserver.options.ignores] ignoreCollations` deliberately |
+| Objects you don't own appear | No filter on a shared or replicated database | Project root | Use a filter file; the default is `Filter.scpf`, set by `[redgateCompare.sqlserver] filterFile` |
+| Missing objects in a comparison | The account can't view them | Compare as owner and as check account | Grant `VIEW DEFINITION` |
+| Slow comparisons | No `SELECT` on `sys.sql_expression_dependencies` | Check account rights | Grant it (SQL Compare's permissions page) |
+| `COMPARISON_DATABASE_CONNECTION_FAILED` or `COMPARISON_REGISTRATION_FAILED` while `flyway info` connects | The comparison engine opens its own connection, so Entra, Kerberos or certificate settings the JDBC driver accepts can still fail there; or the account can't read metadata; or a schema model file is corrupted or hand-edited | The underlying error in the message; any file it names | Fix the connection setting (section 5 or 6); grant `VIEW DEFINITION`; fix the schema model file the message names |
+| Compare or generate fails with "Object reference not set to an instance of an object" | A hand-edited `Filter.scpf` with an excluded object type and an empty expression (reported in practice) | Diff `Filter.scpf` against the last version that worked | Rebuild the filter in Flyway Desktop's or SQL Compare's filter editor, then commit it |
+
+Excluding objects through a filter also hides drift in them. Record each filter decision in your decision log (file 01).
+
+## 9. Timeouts and locks
+
+| Symptom | Likely cause | Check | Fix |
+|---|---|---|---|
+| Second run fails after about 50 seconds | Flyway retries its lock once a second up to `lockRetryCount` (default 50) | Another run on the same target? | Serialize runs per target, or raise it; `-1` retries forever |
+| First step fails because the database is still starting | `connectRetries` defaults to 0 | Start order | Set `connectRetries` (waits 1 second, doubling) |
+| Login times out | Driver `loginTimeout` default is 30 seconds | Network path | Fix the path; raise it only after |
+| A migration hangs | A blocking session holds a lock; the driver's `lockTimeout` default waits indefinitely | Query below | Resolve the blocker; consider `lockTimeout` in the URL |
+
+> Not from Redgate docs — starting point, validate in your environment.
+```sql
+SELECT session_id, blocking_session_id, wait_type, wait_time, command
+FROM sys.dm_exec_requests
+WHERE blocking_session_id <> 0;
+```
+
+## 10. Debug output and what to send Redgate Support
+
+Add `-X` for debug output, which also logs the proxy detected and the statement that failed, and `-outputFile=<path>` to write output to a file (Redgate's Command-line page). Check versions with `flyway --version`. Redgate's notes say `-X` shows each setting's effective value and where it came from, but on a current engine it didn't print those origins before a connection failed, so don't rely on it to find which file a setting came from. For a machine-readable error, add `-outputType=json` and read `error.errorCode`, plus `sqlState`, `lineNumber` and `subErrorCode` when present (file 22, section 1). Desktop problems: Desktop's verbose logs and "View command" (section 3). MCP server problems: its own logs (section 12).
+
+> Not from Redgate docs — starting point, validate in your environment.
+```bash
+flyway --version -outputType=json > flyway-version.json
+flyway info -environment=<name> -X -outputFile=flyway-debug.txt
+```
+
+Send Redgate Support (https://productsupport.red-gate.com/):
+
+- The five facts from section 1.
+- `flyway --version` output, Desktop's version from its About page, and the SQL Server or Azure SQL version.
+- The `-X` output, redacted: no passwords, tokens, permits, host or server names, database names, or schema names unless Support asks and your policy allows.
+- Desktop logs for Desktop problems, collected soon after the failure.
+- The report file if a `check` was involved. Reports don't keep history (each run overwrites them, from engine 12.0.0), so save them right after the failure. Never table data.
+- The diff artifact only for a comparison problem, and only with your consent first: it contains schema metadata, so redact it like the `-X` output.
+
+`FAULT` and `COMPARISON_FAULT` (file 22, section 7) go straight to Support with the list above.
+
+## 11. Azure DevOps pipelines
+
+| Symptom | Likely cause | Check | Fix |
+|---|---|---|---|
+| Flyway runs as Community, or a login fails, although the secret variable exists in the pipeline | Azure DevOps doesn't export secret variables to scripts automatically | The step's `env:` block | Map each secret into every step that runs Flyway, by name under `env:` (for example `FLYWAY_EMAIL: $(FLYWAY_EMAIL)`), as the repository's Azure DevOps pipelines do |
+| "ERROR: Invalid argument: -check" in a PowerShell task | PowerShell split a dotted argument | The task's command line | Quote each namespaced argument: `"-check.buildEnvironment=build"`. Quote URLs that contain `;` or `&` as `-url='"jdbc:..."'` (section 4) |
+| A container job on a `redgate/flyway:*-azure` image fails at once, for example "Invalid flag" | The `-azure` images have no entrypoint, so the script must call `flyway` itself | The script's first word | Start every command with `flyway ...`, and pin the image tag rather than using `latest` |
+| A CI step on the standard `redgate/flyway:<tag>` image can't run shell commands | The standard image's entrypoint is `flyway`, so the step's script is passed to Flyway rather than a shell | The image tag and the step's script | Override the image's entrypoint when the step needs a shell, or use a `-azure` image, which has none; pin the tag |
+| A failed Flyway step is treated as success, or retried wrongly | The script tests for exit code `1` | The script | Any non-zero exit is a failure; branch only on 35 (section 4) |
+
+Never add `repair` or `clean` to a pipeline step, or `baselineOnMigrate` on a shared environment, to get a run green. A person decides on and runs `repair` after reading file 22.
+
+## 12. The Flyway MCP server (preview)
+
+The Flyway MCP server is preview. Registering it and choosing a toolset are in file 20, section 7; this table covers faults once it's registered.
+
+| Symptom | Likely cause | Check | Fix |
+|---|---|---|---|
+| `flyway` isn't recognized when the AI tool starts the server | Flyway isn't on the `PATH` the tool sees | `flyway version` in a terminal | Add Flyway's folder to the `PATH` or use the full path in `command`. For GUI-launched tools on Windows, Redgate suggests `flyway.cmd` |
+| The AI tool doesn't detect the server | The file isn't named exactly `.mcp.json` (not `mcp.json` or `.mcp.json.txt`), or isn't in the folder the tool started in | The file name with extensions shown; the tool's start folder | Rename or move it (Claude Code also takes `claude --mcp-config <path>`), then restart the tool |
+| Nothing happens, or tools return nothing | The session hasn't loaded a project | Ask for `load_project` and expect a workspace ID | Load the project first, every session |
+| Can't find `flyway.toml` | The path given isn't the project folder; Desktop may have created the project in a subfolder | Which folder holds `flyway.toml` (and `flyway.user.toml`)? | Pass the absolute path of that folder to `load_project` |
+| "error: No such environment", or missing `[flywayDesktop]` environments | `[flywayDesktop] developmentEnvironment` or `shadowEnvironment` is missing, or names an environment that isn't defined | The `[flywayDesktop]` block against the `[environments.*]` blocks | Set both keys and define both environments (file 20, section 6). A project with only one target and hand-written migrations can't use the `develop_*` toolsets |
+| Migration tools such as `generate_migrations` or `test_migrate` are missing | The server was started with `-mcp.toolsets=develop_state` | The `args` in `.mcp.json` | Use `develop_migrations` when migration generation is wanted (file 20) |
+| A tool named `create_before_pull_snapshot` isn't found | Renamed `create_schema_model_checkpoint` from engine 13.5.0 | `flyway version` | Use the new name |
+| A password appears in a TOML file after using Desktop's connection dialog | Desktop can write credentials into TOML | Which file holds it? | Keep logins only in the git-ignored `flyway.user.toml` and never commit it; pipelines use `${env.X}` from secrets (file 10) |
+
+Where the server keeps its files:
+
+| Purpose | Windows | Linux |
+|---|---|---|
+| Server logs (kept up to `-mcp.maxLogs`, default 100) | `%localappdata%\Red Gate\Logs\Flyway` | `~/.local/share/Red Gate/Logs/Flyway` |
+| Session workspace artifacts (diffs) | `%tmp%` | `/tmp` (or `$TMPDIR`) |
+| Licensing and feature usage | `%appdata%\Redgate` | `~/.config/Redgate` |
+
+Read the newest log file after a failed tool call. Redact MCP logs the same way as `-X` output (section 10) before sending them anywhere.
+
+## 13. In daily use
+
+- Ask the assistant "why did this fail?" and paste the redacted error; it asks for the five facts first.
+- Make `flyway --version` and `flyway testConnection` the first steps of every job, so licensing and network faults fail early.
+- After any tool upgrade, rerun the ten commands in file 04, section 11.
+
+## 14. Limits
+
+- This file gives checks to run, not diagnoses of your environment.
+- Rows marked "reported in practice" come from real-world use rather than a Redgate page; check them against Redgate's current pages.
+- Flyway documents only exit codes 1 and 35, and from engine 12.9.0 other non-zero codes can appear with no published mapping (file 22). Treat any non-zero as failure, branch only on 35, and use the error code for anything finer.
+- The unset-variable behavior in section 4 was tested on one current engine for `${env.X}` in environment settings only.
+- Microsoft's JDBC driver decides most SQL Server authentication behavior; Redgate points to Microsoft's documentation for it.
+- The MCP server is preview; its troubleshooting steps can change between engine releases.
+
+## 15. Instructions for the AI assistant using this file
+
+- Start every tooling problem by asking for the five facts in section 1, one at a time.
+- If the error came from `migrate`, `validate`, `repair`, a drift gate or a deployment job, switch to file 22. For an error code or exact message prefix, match it in file 22, section 7 first.
+- Match the symptom to a row, give the check and the fix, and name the file for that area. If nothing matches, say so and suggest a support case (section 10).
+- In PowerShell examples, quote every namespaced (dotted) argument, and never test an exit code for `1`.
+- Never suggest putting a token, password or truststore password in a committed file, opening a database or firewall to all addresses as a fix, or turning off certificate validation in production.
+- Warn that filters and ignore options hide drift, and suggest a decision-log entry (file 01).
+- Tell the person to remove credentials, host names, database names and data before pasting logs.
+- Answer in the language the person writes in. Keep commands, keys, file names and error text in English.

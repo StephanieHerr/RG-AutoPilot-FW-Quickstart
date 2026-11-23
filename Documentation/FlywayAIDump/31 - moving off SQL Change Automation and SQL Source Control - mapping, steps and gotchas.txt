@@ -1,0 +1,296 @@
+Flyway Enterprise AI library - file 31 of 32
+MOVING OFF SQL CHANGE AUTOMATION AND SQL SOURCE CONTROL - MAPPING, STEPS AND GOTCHAS
+Flyway reference library, October 2026. Generic guidance written for your AI assistant. It contains no data from your environment, and you shouldn't add any to these files.
+
+What this covers: How a SQL Server team using Redgate SQL Change Automation (SCA) or SQL Source Control (SoC) moves to Flyway Enterprise. It sets out what each tool is and does, their status as Redgate states it, how each SCA concept and PowerShell cmdlet maps to Flyway, Redgate's documented migration steps and a practical checklist, how baselines and the shadow database change, how a SoC project is imported into Flyway Desktop, a capability table for SoC, and the gotchas. It's stated as mechanics, not as a recommendation for either tool.
+
+Not in this file: Baselining in depth, Backup as Baseline and running side by side (file 07), moving off SSDT SQL projects (file 06), `flyway.toml` settings, environments and filters (file 10), pipelines (files 11 and 12), SQL Compare and the other Redgate tools alongside Flyway (file 19), current versions and preview status (file 25), and licensing (file 04).
+
+Contents:
+1. The short version
+2. What SQL Change Automation is
+3. Status, as Redgate states it
+4. Mapping SCA concepts to Flyway
+5. Mapping the SCA PowerShell cmdlets
+6. Moving an SCA project: Redgate's steps
+7. Practical checklist for an SCA move
+8. Baselines, SQL Clone images and the shadow database
+9. What SQL Source Control is and does
+10. Importing a SQL Source Control project into Flyway Desktop
+11. SQL Source Control and Flyway Enterprise, capability by capability
+12. Gotchas
+13. Limits
+14. Sources
+15. Instructions for the AI assistant using this file
+
+## 1. The short version
+
+For: architects, release managers and team leads with SCA or SoC projects.
+
+- Redgate's transition page describes Flyway Enterprise as the next version of SQL Change Automation, and the SoC docs point cloud and Entra MFA users to Flyway.
+- There's no SCA project importer. You create a fresh Flyway project, connect the same development database, copy the filter, baseline, and rebuild the pipelines (section 6).
+- SoC projects have an importer, in Flyway Desktop and in `flyway init` (section 10).
+- History doesn't move. SCA's `__MigrationLog` isn't converted. Flyway starts from a baseline, and the old migrations stay archived in Git.
+- Don't run SCA and Flyway on the same project or database at once.
+
+## 2. What SQL Change Automation is
+
+| Component | Description |
+|---|---|
+| Lineage | Formerly ReadyRoll. Redgate's migrations-based approach for SQL Server, after SQL Compare (state) and SQL Source Control (state) |
+| Projects | `.sqlproj`-based SCA projects, authored in Visual Studio or the SSMS extension. SQL Server only |
+| Project contents | `Migrations`, `Programmable objects`, `Pre-deployment`, `Post-deployment`, `Schema-model` (offline schema model), `Additional scripts`, `Unsupported`, `Provisioning`, `[Name].sqlproj`, `[Name].sqlproj.user`, `Filter.scpf` |
+| Migrations | Files start with a number and end `.sql` (for example `0005_Alter-Customer-Add-PhoneNo.sql`). Each has a unique ID in its header, and tracking is by that ID, so files can be renamed after deployment. Ordered by folder path, then numeric prefix |
+| Programmable objects | Stored procedures, views, functions and DDL triggers stored as repeatable scripts, redeployed when their checksum changes and run after migrations. The `ProgrammableObjectHandling` setting takes `UseRepeatableScriptsForAllObjects` (default), `UseRepeatableScriptsForModifiedObjects` or `ScriptInMigrations` |
+| Pre- and post-deployment scripts | Run on every deployment, support SQLCMD syntax, not in a transaction by default |
+| Offline schema model | Read-only object-level scripts kept for history in version control |
+| Tracking table | `__MigrationLog` in the target database (default `[dbo]`), plus a `__MigrationLogCurrent` view (the view name is unverified) |
+| Variables | SQLCMD variables (`$(DatabaseName)`, `$(DeployPath)` and custom ones). Environment variables override them in Azure DevOps and Octopus |
+| Baseline | A baseline script, or a SQL Clone image as the baseline. The `ForceDeployWithoutBaseline` safety variable |
+| Shadow database | SCA creates it automatically |
+| PowerShell module | Cmdlets including `Invoke-DatabaseBuild`, `New-DatabaseBuildArtifact`, `Export-DatabaseBuildArtifact`, `Publish-DatabaseBuildArtifact`, `New-DatabaseReleaseArtifact`, `Use-DatabaseReleaseArtifact`, `Export-DatabaseReleaseArtifact`, `Invoke-DatabaseTests` (tSQLt), `Sync-DatabaseSchema`, `New-DatabaseConnection`, `Test-DatabaseConnection`, `New-DatabaseDocumentation` |
+| CI/CD add-ons | Azure DevOps, Team Foundation Server, Octopus Deploy, TeamCity, Bamboo, Jenkins |
+| SoC projects | SCA could also build and deploy SQL Source Control projects (state-based) |
+
+## 3. Status, as Redgate states it
+
+| Source | Statement |
+|---|---|
+| Redgate's SCA support page | SCA is "retired from sale and is not available to new users". Existing SCA customers, and holders of an active SQL Toolbelt licence, can still buy additional entitlements. Redgate says it is continuing to support and maintain SCA |
+| Flyway docs, transition page | Flyway Enterprise is described as the next version of SCA. Both can be installed side by side, but use them on different projects |
+| SCA product page | Now redirects to the support page |
+
+- No end-of-support or end-of-life date is published for SCA. Don't quote one, and don't call SCA deprecated beyond what the support page says.
+- SoC is still sold and supported. Redgate's SoC docs and product page carry no end-of-life notice. Don't quote an end-of-life date for SoC either.
+- Which Flyway licence each tool's users move to is on Redgate's transition licence page. Confirm licensing with your Redgate account team (file 04).
+
+## 4. Mapping SCA concepts to Flyway
+
+| SCA | Flyway | Notes |
+|---|---|---|
+| SCA project (`.sqlproj`) | A project folder with `flyway.toml` (plus the git-ignored `flyway.user.toml`) | No project file tied to Visual Studio |
+| Visual Studio or SSMS extension | Flyway Desktop, with any editor for the development database | Flyway Desktop has no SSMS integration |
+| Migrations `0001_x.sql` with a header ID | Versioned migrations `V<version>__<description>.sql` | Flyway tracks by version and checksum, not by ID. Renaming or editing an applied file fails validation |
+| Programmable objects | Repeatable migrations `R__<description>.sql`, or versioned migrations | See the `ProgrammableObjectHandling` mapping below |
+| Pre- and post-deployment scripts | Callbacks (`beforeMigrate`, `afterMigrate`, `beforeEachMigrate`, `afterClean` and others) | No SQLCMD `:r` includes. Use placeholders instead |
+| Offline schema model | The schema model (`schema-model/`) | Editable, and the source for generated migrations, not read-only |
+| `__MigrationLog` and `__MigrationLogCurrent` | `flyway_schema_history` | Different table and semantics. Not converted |
+| SQLCMD variables `$(name)` | Placeholders `${name}`, set per environment, plus resolvers for secrets | `$(var)` syntax has to be rewritten (file 06, section 8, has the same change for SSDT) |
+| Baseline script | A `B` migration for new, empty environments, or the `baseline` command with `baselineVersion` for existing, populated ones | Two separate mechanisms (file 07, section 2). Backup as Baseline is this library's preferred route (section 8) |
+| SQL Clone image as baseline | The `backup` provisioner (preview), which is how Backup as Baseline works, or the `snapshot` provisioner (preview) for shadow and build | The Redgate Clone provisioner is deprecated |
+| Automatically created shadow database | A `shadow` environment, re-provisioned by Flyway | Redgate's SCA transition steps say to pre-create it (section 8) |
+| Drift check in a release artifact | `flyway check -drift` against a saved snapshot | Needs a snapshot saved on each deployment (section 7) |
+| `Filter.scpf` | The same file format for SQL Server | Copy it into the Flyway project root |
+| Static data | Static data tables (`[[redgateCompare.staticDataTables]]`, primary key required) | File 07, section 7 |
+| Rollback scripts | Undo (`U`) scripts generated with migrations, and rollback scripts from `prepare` | File 14 |
+| Azure DevOps, Octopus, TeamCity, Bamboo and Jenkins add-ons | The Flyway CLI or Docker image in pipeline YAML; Redgate's GitHub Actions | Pipelines are rebuilt, not converted (files 11 and 12) |
+
+`ProgrammableObjectHandling` to Flyway. Library advice, not from Redgate docs:
+
+| SCA setting | Closest Flyway pattern |
+|---|---|
+| `UseRepeatableScriptsForAllObjects` (default) | Repeatable `R__` migrations for procedures, views, functions and DDL triggers |
+| `UseRepeatableScriptsForModifiedObjects` | Repeatable `R__` migrations for the objects you change, versioned migrations for the rest |
+| `ScriptInMigrations` | Versioned migrations, as Flyway generates them from the schema model |
+
+Repeatable migrations run after versioned ones, in description order, not dependency order. Programmable objects that reference each other need descriptions that sort correctly, or need to live in versioned migrations.
+
+## 5. Mapping the SCA PowerShell cmdlets
+
+| SCA cmdlet | Flyway equivalent |
+|---|---|
+| `Invoke-DatabaseBuild` | `flyway migrate` against a clean build environment, plus `flyway check -code` (file 13) |
+| `New-DatabaseReleaseArtifact` (change report, drift, update script) | `flyway check -changes`, `check -drift` and `check -dryrun`, with HTML and JSON reports; or `flyway prepare` for a state-based script (file 11) |
+| `Use-DatabaseReleaseArtifact` | `flyway migrate`, or `flyway deploy` of a reviewed `prepare` script |
+| `Sync-DatabaseSchema` | `flyway deploy` of a reviewed `prepare` script, or "update development" in Flyway Desktop |
+| `Invoke-DatabaseTests` (tSQLt) | Flyway has no test command. It builds the database and your pipeline runs the tSQLt tests (file 13, section 10) |
+| `New-DatabaseConnection`, `Test-DatabaseConnection` | Environments in `flyway.toml`, without credentials (file 10). `flyway info -environment=<name>` is a read-only check that the connection works |
+| `New-DatabaseDocumentation` | No equivalent. SQL Doc is a separate product |
+
+The build and release artifact cmdlets (`New-`, `Export-` and `Publish-DatabaseBuildArtifact`, `Export-DatabaseReleaseArtifact`) have no Flyway command. Package the reviewed project once and promote it through the pipeline (file 11).
+
+## 6. Moving an SCA project: Redgate's steps
+
+Redgate documents a fresh Flyway project, not a converter. For SCA projects in Visual Studio or SSMS:
+
+1. Install Flyway Desktop with an Enterprise licence (file 04).
+2. Create a new project.
+3. Connect the development database.
+4. Connect the shadow database. Pre-create it, empty, with the database settings, linked servers and filegroups the project needs (section 8).
+5. Copy the SCA project's `Filter.scpf` into the Flyway project root, overwriting the default.
+6. Create the baseline. Redgate's page says to generate a new baseline script. This library uses Backup as Baseline first, and a generated baseline script only where that isn't possible (section 8, file 07, section 4).
+7. Baseline the downstream environments deliberately, once per environment (section 8).
+8. Rebuild the CI/CD pipelines with the Flyway CLI (files 11 and 12).
+
+For SoC projects that SCA deployed: import the SoC project into Flyway Desktop (section 10), then rebuild the pipelines.
+
+No automated SCA project importer is documented. Desktop's import supports SoC and Source Control for Oracle only.
+
+## 7. Practical checklist for an SCA move
+
+- Freeze SCA changes, and make sure every environment is at the same SCA release before you baseline.
+- Keep SCA migration files out of the Flyway `migrations/` folder, because their history isn't converted. Archive or tag them in Git.
+- Convert pre- and post-deployment scripts to callbacks, and SQLCMD variables to placeholders.
+- Decide the programmable objects strategy: `R__` repeatables or versioned migrations (section 4).
+- Leave `__MigrationLog` in place (it's harmless) or drop it once SCA is retired. If it shows up in comparisons, filter it out in `Filter.scpf`.
+- Save a snapshot on every deployment from day one (`-migrate.saveSnapshot=true` or `-deploy.saveSnapshot=true`), so drift checks have something to compare against (file 14).
+- Pilot one database, then roll out.
+- Record each environment's cutover date in your decision log (file 01).
+
+## 8. Baselines, SQL Clone images and the shadow database
+
+Baseline point. Use Backup as Baseline, which restores a schema-only backup of a production-representative database into the shadow through the `backup` provisioner (preview). It avoids the problems a generated baseline script has with invalid objects, linked servers, filegroups and size. Where Backup as Baseline isn't possible (for example some Azure SQL Managed Instance setups, and Azure SQL Database), generate a baseline script instead. Both are in file 07, section 4.
+
+Downstream environments. Mark each existing, populated database with the `baseline` command, run deliberately by a person, once per environment, with `flyway info` before and after (file 07, section 6). `baselineVersion` must match the backup's `backupVersion`, or the `B` script's full version including its timestamp (file 07, section 2). A `B` script only builds new, empty environments; it doesn't baseline a populated one. Keep `baselineOnMigrate` false on every shared environment, because it hides a connection to the wrong database. If the pipeline uses Redgate's deploy action, set its `baseline-on-migrate` input to `'false'` (file 12).
+
+SQL Clone images. SCA could use a SQL Clone image as the baseline. In Flyway the backup provisioner (preview) or the snapshot provisioner (preview) fills that role for shadow and build databases. The Redgate Clone provisioner is deprecated, so don't start new work on it.
+
+The shadow database. SCA created its shadow automatically. Redgate's SCA transition steps say to pre-create an empty shadow with the database settings, linked servers and filegroups the project needs, and to make any cross-database dependencies reachable from it. With Backup as Baseline the restore supplies most of that. File 10 covers shadow configuration, and file 16 the other provisioners.
+
+## 9. What SQL Source Control is and does
+
+From the SoC 8 docs.
+
+What it is:
+
+| Item | Detail |
+|---|---|
+| Product | An SSMS add-in that links a database to a source control system. It version-controls SQL Server schemas, and optionally static data, as object-level scripts |
+| Engine | The SQL Compare engine and a scripts folder. A three-way comparison between the database, the "transient" (a local copy of the head revision) and the "working base" (the state at your last commit or get latest) |
+| Host | SSMS 18 to 22, Windows only, .NET Framework 4.7.2 or later. ARM64 isn't supported |
+| SQL Server | No SQL Server 2000, 2005 or 2008/R2. For Azure SQL Database, Managed Instance, RDS, Google Cloud and Entra MFA, the docs point to Flyway |
+
+Development models:
+
+| Model | How it works | Trade-offs the docs state |
+|---|---|---|
+| Dedicated | Each developer has their own copy (shared instance, local Developer Edition, LocalDB or SQL Clone). Get latest, develop, commit | No risk of overwriting someone else's changes; you maintain a database per developer |
+| Shared | One database for all developers. Develop, then commit | No safe way to test changes in isolation; without object locking, developers may overwrite each other's changes; who made a change is sometimes lost |
+
+- Change attribution on a shared database comes from the SQL Server default trace. It's cached in tempdb and lost on restart unless a ChangeLog database is set up. Changes to data can't be logged.
+- The docs suggest the dedicated model when developers often modify the same objects.
+
+Object locking:
+
+- A locked object can't be edited by others: the server returns an error. It's enforced by a server-level DDL trigger (`RG_SQLSourceControl_DDLTrigger`) and a `RedGate` database, installed by a setup script that needs elevated rights.
+- Anyone can unlock any locked object. Only some object types can be locked (defaults, queues, rules, functions, stored procedures, synonyms, tables, user-defined and table types, CLR types, views and XML schema collections). It isn't compatible with In-Memory OLTP, Amazon RDS or Azure SQL Database. Locks persist if SoC is uninstalled without the removal script.
+
+Version control:
+
+| System | Integration |
+|---|---|
+| Git | Full. Git for Windows on PATH. SSH works, but key passphrases aren't supported. Commit is local, then Push; Get latest pulls, then applies changes to the database |
+| SVN | Full |
+| TFS and Azure DevOps (TFVC) | Full. Git-based Azure DevOps repositories use Git mode |
+| Mercurial, Perforce, Plastic SCM and others | "Custom" setup: an XML configuration of command-line hooks, with presets for these |
+| Working folder | SoC saves scripts to a folder, and you commit with your own client |
+
+Static data, migrations, scripts and filters:
+
+- Static data: only tables with a valid primary key. Very large static data tables can make SoC time out. Schema and data changes to the same object are committed or retrieved together.
+- Migration scripts: the Migrations tab was deprecated for new projects in January 2020, and Redgate recommends Flyway for anyone who wants migration scripts for deployments.
+- Pre- and post-deployment scripts: one of each per project. SQL Compare (the UI, or its command line from 13.4.7) and SCA (from 3.0.4) run them, SQL Data Compare doesn't, and they also run locally on Get latest and Undo. They must be idempotent, run outside the main transaction, and don't support SQLCMD syntax or variables. They aren't parsed before commit.
+- Filters exclude by object type, name or schema, and can be committed to share with the team. Comparison options are SQL Compare options, local to the machine until committed. SoC's defaults include `IgnoreWhiteSpace`, `IgnoreUserProperties`, `IgnoreCertificatesAndCryptoKeys` and `ForceColumnOrder`. Flyway's comparison option defaults differ, so compare them with file 19 before you rely on matching output.
+
+What it doesn't do:
+
+- No deployment of its own. Deployment is by SQL Compare, the SQL Compare command line, or SCA.
+- No documented drift detection or drift reporting.
+- No merge in SoC itself: Keep mine or Take theirs, with external merge tools only for stored procedures. The docs say the merge tool's output is executed on the database immediately, so check the merged procedure before you save it in the tool.
+- No guaranteed rollback of a failed commit or get. It uses transactions to try, and the docs say it won't always succeed.
+- No CI/CD, change reports, code review, undo scripts, snapshots or databases other than SQL Server.
+- It runs inside the SSMS process.
+
+## 10. Importing a SQL Source Control project into Flyway Desktop
+
+1. Tag the repository, and back up the local repository.
+2. One team lead imports. In Flyway Desktop: Import project..., SQL Source Control, then paste the SoC repository folder. For Git that's the repository folder; for SVN or TFVC use the working base path.
+3. Or from the command line, using the documented `init` form:
+
+> Not from Redgate docs — starting point, validate in your environment.
+
+```powershell
+flyway init -projectName=<project-name> -databaseType=sqlserver -from=<SoC project folder> -fromType=SqlSourceControl
+```
+
+   Redgate's example uses a different database type; `sqlserver` is the SQL Server value on the `init` page. To import several projects, run the command once per project.
+4. Check what came across. Comparison options, filters, static data configuration and Git history are preserved. Connection details are incomplete, because SoC stores few. Add the environments in `flyway.toml`, without credentials (file 10).
+5. The team lead commits and pushes. Everyone else opens the project from version control.
+6. Stop using SoC on the project after the import. For pre- and post-deployment scripts, Redgate asks you to contact them.
+7. Choose how to deploy: state-based (`prepare` and `deploy`, file 11) or migrations generated from the schema model with a shadow database. For migrations against databases that already exist, baseline them first (section 8, file 07).
+
+Source Control for Oracle has an equivalent importer. Passwords aren't imported.
+
+## 11. SQL Source Control and Flyway Enterprise, capability by capability
+
+| Capability | SQL Source Control | Flyway Enterprise |
+|---|---|---|
+| Where it runs | SSMS add-in, Windows | Flyway Desktop (Windows, macOS, Linux), the CLI, Docker and CI/CD |
+| Schema capture | Object-level scripts from the development database | The schema model (object-level scripts), using the SQL Compare engine for SQL Server with Flyway's own option defaults (file 19) |
+| Development models | Dedicated or shared | Per-developer development and shadow databases (Desktop's documented model) |
+| Object locking | Yes, with the limits in section 9 | No |
+| Change attribution | Default trace or a ChangeLog database | Git history, and object level history in Desktop (status in file 25) |
+| Version control | Git, SVN and TFVC in full; others through hooks or a working folder | A built-in Git client; for other systems, commit the project folder with your own client |
+| Static data | Yes, primary key required | Yes, static data tables, primary key required |
+| Migration scripts | Deprecated for new projects | Versioned, repeatable, undo and baseline migrations, generated from the schema model |
+| Pre- and post-deployment scripts | One each, no SQLCMD | Callbacks with placeholders |
+| Filters and comparison options | Yes | Yes, carried over by the importer; `Filter.scpf` for SQL Server |
+| Deployment | None of its own | `migrate`, or `prepare` and `deploy` (state-based), with approvals in CI |
+| Drift detection | Not documented | `check -drift`, plus `check -changes` and `check -dryrun`, with HTML and JSON reports |
+| Code review | No | `check -code` (file 13) |
+| Rollback | Undo of uncommitted local changes | Undo scripts and rollback scripts from `prepare` (file 14) |
+| Cloud targets and Entra MFA | The docs point to Flyway | Supported (file 10) |
+
+## 12. Gotchas
+
+- History tables differ (`__MigrationLog` against `flyway_schema_history`). Nothing is migrated automatically.
+- Flyway validates checksums. Editing or renaming an applied migration fails `validate`, where SCA allowed renames.
+- SCA orders by numeric prefix; Flyway orders by version. Agree one version scheme before the first migration (file 09).
+- SQLCMD syntax in SCA pre- and post-deployment scripts doesn't run in Flyway.
+- Repeatable migrations run in description order, not dependency order (section 4).
+- The shadow database must already exist unless a provisioner creates or restores it, and cross-database dependencies must be reachable from it.
+- Don't run SCA and Flyway on the same database project.
+- Redgate's transition page may still list object level history as missing from Flyway Desktop. File 25 has its current status.
+- No object locking, and Desktop's built-in client is Git only.
+- Cross-database and circular dependencies can block a generated baseline script. Plan filters, or use Backup as Baseline (section 8).
+- The SQL Compare engine is shared, but Flyway's comparison option defaults differ and some options are fixed, so check the first generated migrations rather than assuming SCA's output (file 19).
+
+## 13. Limits
+
+- No SCA importer exists. Migration history, header IDs and `__MigrationLog` don't carry over.
+- The SoC importer doesn't bring complete connection details or pre- and post-deployment scripts.
+- The `ProgrammableObjectHandling` mapping in section 4 is library advice, not Redgate's.
+- The SoC facts here come from the SoC 8 docs and change with its releases. Check a page before relying on a detail.
+- The backup and snapshot provisioners are preview (file 25).
+
+## 14. Sources
+
+- SCA support page: https://www.red-gate.com/products/sql-change-automation/support/
+- Transitioning from other Redgate tools: https://documentation.red-gate.com/flyway/getting-started-with-flyway/transitioning-from-other-redgate-tools
+- From SQL Change Automation: https://documentation.red-gate.com/flyway/getting-started-with-flyway/transitioning-from-other-redgate-tools/sql-change-automation
+- From SQL Source Control: https://documentation.red-gate.com/flyway/getting-started-with-flyway/transitioning-from-other-redgate-tools/sql-source-control
+- Transition licence information: https://documentation.red-gate.com/flyway/getting-started-with-flyway/transitioning-from-other-redgate-tools/transition-license-information
+- Importing projects from other Redgate tools: https://documentation.red-gate.com/flyway/database-development-using-flyway/importing-projects-from-other-redgate-tools
+- Tutorial, import from SQL Source Control: https://documentation.red-gate.com/flyway/getting-started-with-flyway/transitioning-from-other-redgate-tools/sql-source-control/tutorial-import-projects-from-sql-source-control
+- init command: https://documentation.red-gate.com/flyway/reference/commands/init
+- Use a SQL Server backup to baseline a database: https://documentation.red-gate.com/flyway/learn-more-about-flyway/how-to-articles/use-a-sql-server-backup-to-baseline-a-database
+- Backup provisioner (preview): https://documentation.red-gate.com/fd/backup-provisioner-277578935.html
+- Snapshot provisioner (preview): https://documentation.red-gate.com/fd/snapshot-provisioner-277578940.html
+- Redgate Clone provisioner (deprecated): https://documentation.red-gate.com/fd/redgate-clone-provisioner-277578939.html
+- SCA documentation: https://documentation.red-gate.com/sca (projects, migration scripts, programmable objects, pre- and post-deployment scripts, offline schema model, variables, baseline, PowerShell cmdlets and add-ons are pages under it)
+- SQL Source Control 8 documentation: https://documentation.red-gate.com/soc
+- SQL Source Control product page: https://www.red-gate.com/products/sql-source-control/
+
+## 15. Instructions for the AI assistant using this file
+
+- Ask whether the project is SCA (a `.sqlproj` with `Migrations` and `Programmable objects` folders, `__MigrationLog` in the database) or SoC (an SSMS add-in, object-level scripts) before advising. The routes differ: SCA has no importer, SoC does.
+- State Redgate's status lines as written in section 3. Never quote an end-of-life date for SCA or SoC, and don't call either deprecated beyond Redgate's pages.
+- Never suggest copying SCA migrations into `migrations/` or converting `__MigrationLog` into `flyway_schema_history`.
+- For the baseline, lead with Backup as Baseline and fall back to a baseline script only when it isn't possible (file 07). Keep `B` scripts and the `baseline` command distinct.
+- Never suggest `baselineOnMigrate=true` on a shared environment. The person runs `flyway baseline` deliberately, once per environment, after `flyway info`.
+- Never automate `repair`, and never suggest editing the history table.
+- Say "(preview)" every time you mention the backup or snapshot provisioner. Don't suggest the Redgate Clone provisioner for new work.
+- Don't present Flyway's generated SQL as identical to SCA's. Point to file 19 for option defaults.
+- Never suggest SCA and Flyway deploying to the same database at once.
+- Mark code you add that isn't in this file with the not-from-Redgate-docs line.
+- Answer in the language the person writes in. Keep commands, keys, file names and error text in English.

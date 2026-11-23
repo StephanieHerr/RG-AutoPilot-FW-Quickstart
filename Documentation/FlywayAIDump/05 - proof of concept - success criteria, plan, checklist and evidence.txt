@@ -1,0 +1,285 @@
+Flyway Enterprise AI library - file 05 of 32
+Proof of concept - success criteria, plan, checklist and evidence
+Flyway reference library, October 2026. Generic guidance written for your AI assistant. It contains no data from your environment, and you shouldn't add any to these files.
+
+What this covers: A proof of concept you can start quickly and run on your own use cases, focused on database versioning, source control integration, several teams changing one database, and deployment automation. It gives one measurable success criterion per objective, each with the evidence that proves it, a day plan template, a first-week checklist, a use-case card template with ten ready-made use cases (including designing two teams' workflows and a change request gate), a fair side-by-side with SQL projects and DACPAC, the evidence folder, the risks that stall trials, and the readout.
+
+Not in this file: installing and licensing (file 04), moving off SSDT and DACPAC deployments (file 06), baselining (file 07), developer workflows (file 08), designing each team's workflow (file 28), scenario playbooks (file 29), ticketing and change requests (file 30), parallel-team design (file 09), workflow files (file 12), checks (file 13), drift and recovery (file 14), the emergency-change runbook (file 15), audit evidence design (file 17).
+
+Contents:
+1. What this POC proves
+2. Scope
+3. Success criteria, one per objective
+4. Day plan (a template)
+5. First-week checklist
+6. The use-case card
+7. Ten ready-made use cases
+8. A fair side-by-side with SQL projects and DACPAC
+9. The evidence folder
+10. Risks that stall trials
+11. Exit criteria and the readout
+12. In daily use
+13. Limits
+14. Instructions for the AI assistant ("poc" mode)
+
+## 1. What this POC proves
+
+Redgate's POC checklist structures a proof of concept around deployments, rollbacks, drift reports and code analysis. It says all Flyway CLI functionality can be tested locally, and recommends a separate, non-essential environment. This POC keeps that scope and adds what your teams asked for: source control for the database, clear versioning, several teams on one database, and an automated path to `test` and `uat` in GitHub Actions.
+
+It runs your use cases, written on the card in section 6. Section 7 has ten to start from, each mapped to your objectives. Replace their details with real changes from your backlog at kickoff.
+
+## 2. Scope
+
+- One representative database that several teams change. Redgate's checklist suggests starting with an isolated database without linked servers or cross-database dependencies; use case 7 brings that complexity in later.
+- Environments: `development` (each person's own, or one shared; the assistant reads which from your repository or asks, file 01), `shadow`, `build`, `test`, `uat`. No production. `uat` stands in for production when you rehearse the approval and dry-run steps.
+- Targets: on-premises SQL Server, plus one Azure SQL Database or Managed Instance target if you have one.
+- `test` and `uat` in step at the baseline, or with per-target baselines (file 07).
+- People: at least two teams, one DBA reviewer, one DevOps engineer, one person who owns the evidence, and one compliance or audit reader for use case 6.
+- Pipeline: GitHub Actions on a self-hosted runner (files 04 and 12). Until the runner is ready, run the same commands from the licensed terminal that Flyway Desktop opens in the project folder (Redgate's POC workflow page), then move them into the workflow.
+
+## 3. Success criteria, one per objective
+
+One row per objective, in your priority order (log them in your decision log, file 01). Agree each pass line before day 1. Record results as measured, with a link to the evidence. A partial result with a reason is a valid result.
+
+| # | Objective | Pass when | How measured | Evidence artifact | Use case |
+|---|---|---|---|---|---|
+| 1 | Database source control | Every schema and reference-data change in the POC reached `test` from Git through a pull request, and a database built from the repository alone matches `test` with every difference explained | Count changes that bypassed a pull request (target: 0). Run the rebuild comparison in use case 5 | Pull request list; `diff` output (JSON) with an explanation per difference | 2, 5 |
+| 2 | Clear versioning | Anyone on the team can say what version `test` and `uat` are at, and what ran there since a given date, from one command, without asking anyone | `flyway info` with `-infoSinceDate` on each environment, run by someone outside the DBA team | `info` JSON per environment, with `installedOnUTC` and `installedBy` | 1, 2 |
+| 3 | Deployment automation | Every deployment to `test` and `uat` during the POC ran from a GitHub Actions workflow | Count manual SQL steps against `test` and `uat` (target: 0, drills excepted and logged) | Workflow run list filtered to the deploy workflow | 2 |
+| 4 | Fewer conflicts between teams | Each staged collision (duplicate version, too-low version, same object changed by two teams) is caught before merge | Staged collisions caught by the pull request check, out of staged collisions | Failed check log and the fix pull request for each | 1, 9 |
+| 5 | Traceability and audit readiness | For one release, a reader outside the team answers the six auditor questions in file 17 for every migration, using only the evidence pack | Questions answered, out of six times the number of migrations | The pack folder and the reader's notes | 6, 10 |
+| 6 | Modern CI/CD for the database | The pull request check is a required status on every pull request that touches the project, and merge to `test` needs no person | Pull requests merged without the check (target: 0). Time from merge to `test` and to `uat` approval, recorded per run | Branch rule or ruleset export; timing sheet | 2 |
+| 7 | App and DB team collaboration | Each database change is reviewed by a code owner from the database team, and the dry-run SQL is read before `uat` approval | Pull requests with a code-owner approval, out of all; approvals that cite the dry-run artifact, out of all | `CODEOWNERS`, review records, dry-run artifact per run | 2, 9, 10 |
+| 8 | Native fit with GitHub | Rules, reviews, approvals and secrets live in GitHub, and each bypass you try is refused | Try four bypasses: a direct push to main, a merge without the check, an author approving their own pull request, and the initiator approving their own `uat` deployment with Prevent self-review on | Refused attempts with timestamps; settings export | 2, 8, 10 |
+| 9 | Less risk while deploying more often | Hand-made drift in `test` is detected before the next deploy, a dry run precedes every `uat` deploy, and the undo and roll-forward drills complete | Drift caught, out of drift staged; `uat` deploys with a dry run, out of all; drills completed | Drift report; dry-run artifacts; drill logs | 3, 4 |
+| A | Also: development databases from source | A new developer gets a `development` database at the current version from the repository by following written steps | Steps followed by someone new to the project; problems logged | The steps and the log | 5 |
+
+Anonymized copies of production data come from your own approved process, outside Flyway (file 16). Flyway applies migrations to whatever copy that process produces.
+
+All the checks used here are part of Flyway Enterprise. `check -drift` compares the target with one of three things: the snapshot embedded in the target's snapshot history table by an earlier deployment (the default), a deployed snapshot file you keep between runs (`check.deployedSnapshot`), or a build environment that replays the target's applied migrations (migrations-based only). From engine 11.17, a first run with no saved snapshot succeeds with a warning instead of failing, so it reports no drift rather than catching any (Redgate's deploy action README says the same: drift can be flagged only after a deployment has saved a snapshot). For the drift use case, either deploy through the pipeline once first, or use the build-environment comparison (file 14).
+
+## 4. Day plan (a template)
+
+This is a template to adjust, not a schedule. "Day" labels a stage. Take as long as each stage needs, and record actual dates in your decision log (file 01).
+
+| Stage | Goal | What happens | Done when |
+|---|---|---|---|
+| Day 0 | Ready | Work the first-week checklist (section 5) and file 04's prerequisites | The ten commands in file 04, section 11, pass |
+| Day 1 | Project and baseline | Create the project, connect `development` and `shadow`, capture the schema, baseline `test` and `uat` (file 07), commit, protect main | `flyway info` agrees across `test` and `uat` |
+| Day 2 | Two teams in parallel | Use case 1: each team branches, generates a migration and opens a pull request (files 08 and 09) | Two pull requests open, collisions staged |
+| Day 3 | Pull request check | Build database, `check -code`, collision check and a changes report on every pull request (files 12 and 13). Use case 1 completes | A pull request fails on a staged collision and passes after the fix |
+| Day 4 | Release path | Use case 2: merge deploys `test`; `uat` waits for approval with the dry run visible. Real `migrate` only after the preview path works (file 11) | One change reaches `uat` with a recorded approval from someone other than the author |
+| Day 5 | Risk drills | Use cases 3, 4 and 5: drift and reconcile, undo and roll-forward, rebuild from source (file 14) | Drill logs and drift reports filed |
+| Day 6 | Audit, teams and edge cases | Use case 6; then 9 and 10; then 7 and 8 if in scope | The pack is read by someone outside the team |
+| Wrap-up | Readout | Score section 3, fill the readout in section 11 | Decisions logged (file 01) |
+
+Fast start: days 0 to 3 are the shortest route to a first green pull request check and a first dry-run preview (`flyway check -dryrun`). Keep real deployment disabled until both work.
+
+## 5. First-week checklist
+
+Before kickoff (most need people outside your team, so start these first):
+
+- [ ] Objectives agreed and logged (file 01), and an owner for the success criteria named
+- [ ] Use cases picked from your backlog, one card each (section 6)
+- [ ] File 04 items 11 to 15 and 17 requested: runner network access, licensing hosts or an offline permit, proxy decision, CI account and token
+- [ ] A copy of the POC database for `test` and `uat`, plus empty `shadow` and `build` databases
+- [ ] Accounts: deploy account per environment, read-only check account, `db_owner` on `development` for each author
+- [ ] Repository and GitHub environments `test` and `uat` created; security sign-off on the AI tool (file 03)
+
+By the end of the first week:
+
+- [ ] Flyway Desktop shows Enterprise for every author; the runner job reports Enterprise
+- [ ] Project created, baseline committed, `info` agrees on `test` and `uat`
+- [ ] Branch rules or a ruleset on main: pull request, one approval, code owners, required check
+- [ ] `CODEOWNERS` covers the migrations folder, `flyway.toml`, `ci/` and `.github/workflows/` (file 15)
+- [ ] One green pull request check and one failed one (a staged collision)
+- [ ] One dry-run script produced for `test` and read by the DBA
+- [ ] Evidence folder started (section 9) and progress logged (file 01)
+
+## 6. The use-case card
+
+A use case is a real change your teams make, written so someone else can run it and score it. Keep each to one card.
+
+> Not from Redgate docs — starting point, validate in your environment.
+```markdown
+## UC<n>: <short name>
+Objectives: <numbers from section 3>
+Ticket: <ticket-key>
+People and roles: <who authors, who reviews, who approves>
+Preconditions: <what must already be true>
+Steps:
+1. <author>
+2. <pipeline>
+3. <reviewer or approver>
+Pass when: <a measurable statement>
+Evidence: <files and links, with their folder in section 9>
+Failure to stage: <the collision, drift or bad change to try on purpose>
+Run with SQL projects too: yes / no
+Result: pass / fail / partial, with notes and date
+```
+
+## 7. Ten ready-made use cases
+
+Adapt names, objects and tickets at kickoff. Every command below exists in Redgate's command reference. Point each step at its environment with `-environment=<name>`, from the shared `flyway.toml` or, if you scope secrets per job, a `ci/<environment>.toml` per step (file 10).
+
+UC1: Two teams add migrations in parallel. Objectives 1, 2, 4.
+1. Teams A and B branch from main and each generates a migration with its ticket key in the name (file 08).
+2. Stage three collisions: both use the same version; B's version is lower than one A already merged; both change the same table.
+3. A merges first. B's pull request check must fail on each staged collision (file 09). Don't rely on `migrate` to catch a too-low version; that depends on the `outOfOrder` value in your own `flyway.toml`.
+4. B fixes it (renumber, or rebase and regenerate), the check passes, and both reach `test` in order.
+Pass when every staged collision fails the check before merge, and `flyway info -environment=test` lists both migrations as Success. Evidence: failed check logs, fix pull requests, `info` JSON.
+
+UC2: A change flows from development to `uat` through a pull request with approval. Objectives 3, 6, 7, 8.
+1. A developer changes their `development` database, saves to the schema model, generates the migration and its undo script, and opens a pull request.
+2. `CODEOWNERS` requests the database team. The check builds, runs `check -code` and the collision check, and publishes a changes report.
+3. Merge deploys `test`. The `uat` job publishes `flyway check -dryrun` output and waits for a required reviewer who isn't the author.
+4. After approval, `migrate` runs, then `info` and a snapshot.
+Pass when there are no manual SQL steps and the approval record names someone other than the author. Evidence: run links, the approvals JSON (file 17), the dry-run SQL.
+
+UC3: An emergency hotfix is detected as drift and reconciled. Objectives 5, 9. `test` stands in for production.
+1. Precondition: `test` was deployed once by the pipeline, so a snapshot exists.
+2. A DBA makes a change directly in `test` under a ticket, for example an index.
+3. `flyway check -drift` against `test` reports it.
+4. The team incorporates it as a guarded migration named with the ticket key (file 15), through a pull request, and the deploy runs as a no-op on `test`.
+Pass when the drift is caught before the next deploy, the next deploy doesn't remove the hotfix, and the following drift check is clean. Evidence: drift report, reconcile pull request, clean drift result.
+
+UC4: Undo in `test`, roll forward in `uat`. Objective 9.
+1. Deploy a migration with a paired undo script to `test`, then a person runs `flyway undo` against `test`. `info` shows it as Undone.
+2. In `uat`, treat a defect as production would be treated: ship a new forward migration through the normal path.
+3. Write down the decision rule for each environment in your decision log (file 01).
+Pass when undo restores the schema in `test`, and the fix reaches `uat` through a reviewed pull request. Undo restores schema, not data. Evidence: undo log, `info` before and after, roll-forward pull request.
+
+UC5: Rebuild a database from source. Objectives 1, A.
+1. Point the `build` environment at an empty database with the `clean` provisioner (file 16).
+2. Compare a fresh build of the migrations with `test`:
+
+> Not from Redgate docs — starting point, validate in your environment.
+```powershell
+flyway diff "-diff.source=migrations" "-diff.target=test" "-diff.buildEnvironment=build" "-diff.rebuild=true" -outputType=json -outputFile=evidence/uc5-diff.json
+```
+
+3. Explain every difference: objects created outside migrations, permissions, or real gaps to capture.
+4. A new developer brings an empty `development` database to the current version with `flyway migrate -environment=development`.
+Pass when every difference has a written explanation or a fix. Evidence: the diff output, the explanations, the new developer's log. If `test` was baselined, the build needs the baseline script (file 07).
+
+UC6: An audit pack for one release. Objective 5.
+1. Take the release from UC2 and assemble the pack in file 17, section 7.
+2. A reader outside the team answers the six questions in file 17, section 1, for every migration, using only the pack.
+3. Run the scrub check in file 17, section 9.
+Pass when every question is answered and no regulated data is found. Evidence: the pack and the reader's notes.
+
+UC7: A change that touches another database. Objectives 2, 4, 9. Run only if your estate has cross-database references or linked servers (file 29).
+1. Each database is its own Flyway target with its own history.
+2. A change in database A depends on a new object in database B. The workflow deploys B, then A, as separate jobs linked with `needs:`, so a failure in B stops A.
+3. Dry-run both before approval.
+Pass when the order is enforced by the workflow, and a staged failure in B leaves A untouched. Flyway doesn't run one transaction across databases (file 24). Evidence: the workflow file, run logs, `info` per database.
+
+UC8: The same changes done as a SQL project publish. All objectives, for comparison.
+1. On a separate copy of the database, make the UC2 change, a rename, a NOT NULL column on a populated table and a reference-data change in a SQL project.
+2. Build the `.dacpac`, produce SqlPackage `/Action:Script` or `/Action:DeployReport` output for review, then `/Action:Publish`.
+3. Score it against section 3, using section 8.
+Pass when every row has a result for both approaches. Evidence: build log, Script or DeployReport output, publish log. If you already deploy with SQL projects and want to move, file 06 gives the paths, and the `ssdt-cutover` skill (file 21) drafts a per-database plan.
+
+UC9: Two teams, two workflows, one shared core. Objectives 4, 6, 7.
+1. Run the file 28 intake for two teams that work differently, for example Flyway Desktop on dedicated databases and hand-written migrations with `flyway add` (file 08).
+2. Agree the shared core (pipeline template, naming and versioning, checks, operations hand-off, production gate) and what each team chooses. Log it.
+3. Each team ships one change its own way through the same check and workflow to `uat`.
+Pass when both changes reach `uat` through one workflow file and each design fits on one page. Evidence: both designs, decision-log entries, pull requests and run links.
+
+UC10: A change request gates `uat`. Objectives 5, 7, 8. `uat` stands in for production.
+1. Carry one ticket key from your tracker (Jira, ServiceNow, Azure Boards or GitHub Issues) through branch, migration description and pull request title; the key check fails a pull request without one (file 30).
+2. The pipeline links the check report and dry-run script to the change request.
+3. The `uat` deploy waits for the approved change, through the tracker's gate or a GitHub environment reviewer. On a private repository, confirm your GitHub plan enforces it (file 12).
+Pass when a run without an approved change stops, an approved one proceeds, and a reader can go from the ticket to the schema history row. Evidence: the change record, run links, report, dry run and the stopped run.
+
+## 8. A fair side-by-side with SQL projects and DACPAC
+
+You are evaluating SQL projects (a `.dacpac` published with SqlPackage) as an alternative. Run the same use cases both ways, on separate copies of the same non-production database, with the same reviewers. Alternate which approach goes first, and record setup effort apart from run-time behavior so learning order doesn't decide the result. File 06 explains how each approach produces its script.
+
+| Question | SQL project and SqlPackage (Microsoft Learn) | Flyway, migrations-based | What to record |
+|---|---|---|---|
+| What is reviewed in the pull request? | Object definitions | Migration scripts, and the schema model if used | Reviewer time and clarity |
+| Is the previewed script what runs? | Publish recalculates the plan at run time; run the Script output yourself to run what was reviewed (file 06) | The pending scripts are fixed files; `check -dryrun` shows them, and validation fails if an applied script changes | Whether the reviewed SQL matched what ran |
+| Two teams change the same object | Merge conflict in the definition file | Version collision or conflicting migrations, caught by the pull request check (file 09) | Where it surfaced and who fixed it |
+| Renames and NOT NULL columns on populated tables | Refactor log; pre- and post-deployment scripts; `BlockOnPossibleDataLoss` | Written explicitly in the migration and reviewed | Effort and risk per case |
+| Drift | DriftReport for a registered database | `check -drift` against the last deploy's snapshot | What each caught in UC3 |
+| Rollback | Publish an earlier `.dacpac`, or write a script | Undo in lower environments, or roll forward (file 14) | Time and risk in UC4 |
+| History in the database | Optional registration and the refactor log table | Schema history table, one row per migration | What an auditor could follow in UC6 |
+
+Score what each approach needed by hand. Don't score which tool someone already knows.
+
+## 9. The evidence folder
+
+One person owns it. Create it on day 0 and name files so a stranger can follow the story. `-outputFile=<path>` writes a command's console output to a file, and `-outputType=json` gives machine-readable output.
+
+> Not from Redgate docs — starting point, validate in your environment.
+```text
+poc-evidence/
+  00-scope/            scope, success criteria table, environment map
+  01-baseline/         info output per environment, baseline commit link
+  02-use-cases/        UC1/ to UC10/: card, pull request links, logs, result
+  03-pr-checks/        passing and failing check reports
+  04-release/          run links, dry-run SQL, approval records
+  05-drift-and-undo/   drift reports, reconcile pull request, undo and roll-forward logs
+  06-timing/           merge-to-test and merge-to-uat times, as measured
+  07-audit-pack/       the UC6 pack and the reader's notes
+  08-readout/          scored table, decisions, open items
+```
+
+Keep the report from every `flyway check` run, not only failures. Redgate's checks and deploy actions keep their report artifacts for 7 days by default, and GitHub deletes artifacts after your retention period (file 17, section 6). Copy what you need into this folder as you go.
+
+## 10. Risks that stall trials
+
+| Risk | Pre-empt it |
+|---|---|
+| Git authentication or the proxy blocks Desktop | Prove `git fetch` and `git push` first; clone outside Desktop and open the project from disk (file 04, section 4) |
+| Flyway loses internet access behind a proxy | From engine 13.9.0 the OS proxy isn't inherited by default. Set `FLYWAY_USE_SYSTEM_PROXIES=true` on Windows, or the proxy in `JAVA_ARGS` on Linux and Docker (file 04) |
+| The open-source build, or no Enterprise license, so steps are skipped | Make `flyway version` the first job step and fail the job unless it reports Enterprise |
+| The check or shadow account lacks rights | Compare as both the check and deploy accounts; pre-create shadow schemas with the same casing |
+| The runner can't reach on-premises SQL Server | `flyway testConnection` from the runner, with the port in the URL (file 04, section 6) |
+| Azure SQL firewall or private endpoint blocks the runner | Use the `database.windows.net` name and check the rules (file 23) |
+| The checks action skips its report without failing | Give it your own `build` environment, or Docker plus `build-docker-i-agree-to-the-db-vendors-eula: true` (file 23) |
+| A script saved from SSMS fails with `MalformedInputException` | Save migrations as UTF-8 (file 22, card 14) |
+| A private repository on GitHub Team never waits for approval | Required reviewers need GitHub Enterprise on private repositories (file 12) |
+| Serverless Azure SQL fails the first connection with 40613 | Retry, or set `connectRetries` (file 23) |
+
+## 11. Exit criteria and the readout
+
+Exit when every row in section 3 has a recorded pass, fail or partial result with evidence, every failure has an owner and a next step, and decisions are logged in your decision log (file 01).
+
+> Not from Redgate docs — starting point, validate in your environment.
+```markdown
+# POC readout
+Scope: <database, environments, teams>
+Scored table: <rows 1 to 9 and A, result and evidence link each>
+Use cases run: <UC numbers, result each>
+What worked: <list>
+What didn't: <list, with cause>
+Side-by-side findings: <only if UC8 ran; same rows for both approaches>
+Decisions: <approach, branching, numbering, ownership; each in the decision log>
+Open items: <owner and date>
+Next steps: <for example, baseline the next database, plan production>
+```
+
+## 12. In daily use
+
+- Ask the assistant "poc", "what's next?", "score UC3", or "is this evidence enough for row 5?".
+- After each stage, log progress in the decision log (file 01) and file the evidence.
+- Re-run the ten commands in file 04, section 11, whenever a machine, runner or account changes.
+
+## 13. Limits
+
+- A POC proves your use cases on one database. It doesn't certify production readiness or regulatory compliance. Your compliance team maps the evidence (file 17).
+- Drift checks, changes reports and generated scripts need a database with advanced comparison support. SQL Server and Azure SQL have it; check your versions on the supported databases page (file 04).
+- Merge-to-`uat` time depends on your runners and approvers; report it as measured. Flyway doesn't produce anonymized copies, run one transaction across databases, or connect to a tracker on its own (file 24). Redgate's POC checklist advises against using production or other important systems.
+
+## 14. Instructions for the AI assistant ("poc" mode)
+
+- When the person says "poc", ask which stage they are on (day 0 to wrap-up) and show only that stage's steps, its use cases and the evidence it should produce.
+- Work from the section 3 table. Never record a pass without evidence the person names. Never invent timings, results, targets or percentages.
+- Help write use cases on the section 6 card, map each to objective numbers, and suggest the matching ready-made use case. For UC9 use the file 28 intake; for UC10, file 30.
+- Check section 5 before any stage starts. Send install and licensing questions to file 04 and faults to file 23.
+- Keep real `migrate` off until the preview path works. Never suggest production. `undo`, `repair` and `clean` are run by a person, on the environments named in the use case only.
+- For the DACPAC comparison, stay neutral: describe mechanics, score what each approach needed by hand, and send detail to file 06.
+- Offer decision-log entries for progress and decisions after each stage (file 01).
+- Answer in the language the person writes in. Keep commands, keys, file names and error text in English.

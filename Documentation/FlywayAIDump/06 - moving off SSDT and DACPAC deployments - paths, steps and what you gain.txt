@@ -1,0 +1,329 @@
+Flyway Enterprise AI library - file 06 of 32
+MOVING OFF SSDT AND DACPAC DEPLOYMENTS - PATHS, STEPS AND WHAT YOU GAIN
+Flyway reference library, October 2026. Generic guidance written for your AI assistant. It contains no data from your environment, and you shouldn't add any to these files.
+
+What this covers: How a SQL Server team that builds SQL projects (SSDT or SDK-style) and deploys a `.dacpac` with SqlPackage moves to Flyway Enterprise, at a pace each team chooses. It sets out the three paths (layer Flyway over SSDT first, run side by side per environment, full move), the setup steps, where every SSDT artifact goes, the cutover rules that keep a database safe, how to keep producing a `.dacpac` for a team that still needs one, merging branch work, team training, and what changes, stated factually. It also keeps the short description of the three deployment approaches (migrations-based, state-based, hybrid) that other files point to.
+
+Not in this file: Baselining from a script runner and running side by side with it (file 07), the developer authoring options in depth (`08 - developer workflows - every way to make a change and how to choose.txt`), version numbering across teams (file 09), `flyway.toml` settings and secrets (file 10), pipeline design and the state-based release gate (file 11, "The state-based prepare and deploy flow"), GitHub Actions workflows (file 12), code review rules (file 13), drift and undo (file 14), designing each team's flow (`28 - workflow architect - designing dev to PR to operations to pipeline for each team.txt`), moving off SQL Change Automation or SQL Source Control (file 31), and change tickets (`30 - ticketing and change requests - Jira, ServiceNow, Azure Boards and GitHub Issues.txt`).
+
+Contents:
+1. The short version
+2. The three deployment approaches
+3. What changes when SqlPackage stops publishing
+4. Choose a path per database or team
+5. Path A: layer Flyway over SSDT, step by step
+6. Path B: side by side, one environment at a time
+7. Path C: the full move
+8. Where every SSDT artifact goes
+9. Publish profiles to flyway.toml, and the pipeline swap
+10. Cutover rules
+11. A dacpac for a team that still needs one
+12. Merging work from a branch
+13. Training the team
+14. What you gain, stated factually
+15. In daily use
+16. Limits
+17. Instructions for the AI assistant using this file
+
+## 1. The short version
+
+For: architects, release managers and team leads planning the move.
+
+Redgate's Product Learning series for SSDT users describes Flyway as "an addition rather than a replacement" for an SSDT team, and says the biggest change is how individual contributions are merged. Start there. Developers can keep authoring in Visual Studio or VS Code. What changes is the deployment artifact: a reviewed SQL migration instead of a `.dacpac` plus a plan computed at publish time.
+
+Three consequences matter more than any feature list:
+
+- The deployment script exists before the deployment, and it's reviewed in a pull request.
+- Each database records what was applied to it, when, by which account and how long it took.
+- "Publish makes it match" goes away. Renames, data changes and one-off fixes become explicit scripts.
+
+Redgate's documented route for SSDT teams is Path A (section 5). Paths B and C build on it.
+
+Documentation: https://documentation.red-gate.com/fd/working-with-microsoft-sql-server-database-ssdt-projects-182255782.html and https://www.red-gate.com/hub/product-learning/flyway/flyway-for-sql-server-data-tools-users/
+
+## 2. The three deployment approaches
+
+Flyway can take a change from Git to a database in three ways. Pick per project, and record it in your decision log (file 01).
+
+| Approach | Source of truth for deployment | What gets deployed | Script created |
+|---|---|---|---|
+| Migrations-based | Versioned migration scripts in Git | The pending migrations, the same files in every environment | When the change is authored or in the pull request |
+| State-based | The schema model ("what the schema should look like") | One script generated per target by `flyway prepare`, run by `flyway deploy` | At release time, per target |
+| Hybrid (Redgate calls it the combined approach) | The schema model for sharing changes in development, migrations for deployment | Migrations generated from the model, then deployed like migrations-based | At authoring time or in the pull request |
+
+Redgate's combined-approach page says it "decouples the sharing of changes within a team from the deployment process". Path A below is a hybrid: the SQL project plays the part of the model.
+
+State-based is the closest to SqlPackage Publish: the script is made per target at release time, and an unguarded deploy makes the target match the model, which reverts any change made outside the process. If a team chooses it, the release gate is drift check, `prepare` against production, review that file, deploy that same file, snapshot after (file 11, section 6, "The state-based prepare and deploy flow"). Placeholders aren't documented for state-based deployment scripts, so SQLCMD-variable replacement (section 8) needs migrations-based or hybrid. State-based releases don't write versioned schema history rows, and the Flyway Insights (preview) Deployments page shows migrations-based deployments only.
+
+Documentation: https://documentation.red-gate.com/flyway/deploying-database-changes-using-flyway/deployment-approaches-with-flyway/combined-state-and-migrations-approach and https://documentation.red-gate.com/flyway/deploying-database-changes-using-flyway/deployment-approaches-with-flyway/state-based-approach
+
+## 3. What changes when SqlPackage stops publishing
+
+Facts for both sides, from Microsoft Learn and Redgate's documentation. This is a description, not a verdict.
+
+| Topic | SQL project with SqlPackage Publish | Flyway, migrations-based or hybrid |
+|---|---|---|
+| When the deployment script is made | At publish time, per target. Publish works out the difference and runs its plan | At authoring time or in the pull request. `migrate` runs the stored files |
+| Is the reviewed script the one that runs? | Only if you run the `/Action:Script` output yourself. Publish recalculates its plan at run time, so a target that changed after review gets a different plan | Yes. The file reviewed in the pull request runs in every environment, and an edited applied file fails validation |
+| Preview before deploying | `/Action:Script` and `/Action:DeployReport` | `flyway check -dryrun` (the SQL that would run) and `flyway check -changes` (objects changed), in one HTML report with a JSON copy |
+| Renames | `.refactorlog` makes them in-place renames | Written or edited into a migration (section 8) |
+| Data loss protection | `BlockOnPossibleDataLoss` (default True) at publish time | Pull request review and `check -code` rules such as DROP TABLE and DROP COLUMN (file 13) |
+| Reference data | Post-deployment script, re-run every publish | Static data tables generated into migrations, or repeatable migrations |
+| History in the database | Optional registration and `__RefactorLog`. Keep Script or report output as artifacts | `flyway_schema_history`: one row per migration with version, description, checksum, account, time, duration and success |
+| Drift | DriftReport, for databases registered as data-tier applications | `flyway check -drift`, before each deploy and on a schedule (file 14) |
+| Undo | Not among SqlPackage's documented actions. A backup option exists (not on Azure SQL Database) | Undo scripts generated with the migration, for lower environments. Roll-forward in production (file 14) |
+| GitHub Actions | `Azure/sql-action`, or SqlPackage in a run step | `red-gate/setup-flyway` and `red-gate/flyway-actions` (file 12) |
+
+Microsoft documents SDK-style projects (`Microsoft.Build.Sql`) as the format for new development. Tool support differs between Visual Studio and VS Code, so read Microsoft's overview page before choosing tooling, and don't describe SSDT as deprecated: https://learn.microsoft.com/en-us/sql/tools/sql-database-projects/sql-database-projects
+
+Microsoft's tooling, as documented. These facts were checked in October 2026 and change with Microsoft's releases, so confirm them on Microsoft Learn before relying on one:
+
+- What it is. Microsoft's free, state-based tooling for the SQL Server family: SQL Server, Azure SQL Database, Managed Instance, Synapse and SQL database in Fabric. Declarative `.sql` object files build into a `.dacpac`, with reference and syntax validation against a target platform. `SqlPackage /Action:Publish` compares the `.dacpac` with the target and applies the difference.
+- Project formats by tool. SDK-style projects are generally available and the recommended format. They're generally available in VS Code and in preview in Visual Studio 2022, and Visual Studio 2026 supports only the original project format.
+- CI/CD. `dotnet build` plus SqlPackage. The GitHub Action `azure/sql-action` v2.3 runs Publish, Script, DeployReport and DriftReport for a `.dacpac` or `.sqlproj`, and can comment on pull requests. Azure DevOps has an Azure SQL dacpac deployment task.
+- Drift. DriftReport reports changes since the database was last registered, so the database must be registered as a data-tier application (`RegisterDataTierApplication`). `BlockWhenDriftDetected` blocks a publish to a drifted or unregistered database. The report is XML.
+- Code analysis. Built-in rules, plus custom rules through DacFx. Code analysis is generally available in the VS Code MSSQL extension from v1.41 (as checked on 5 October 2026). Code analysis warnings don't fail the build by default. `BlockOnPossibleDataLoss` defaults to true.
+- Rollback. No native rollback mechanism. Redeploy a previous `.dacpac`, or restore a backup.
+
+## 4. Choose a path per database or team
+
+| Path | Developers author in | Who makes the migration | Who deploys | Fits when |
+|---|---|---|---|---|
+| A. Layer Flyway over SSDT | Visual Studio or VS Code SQL projects, unchanged | Flyway, from a development database built from the `.dacpac` (Desktop by a release owner, or the CLI in a pipeline) | Flyway `migrate` | Developers are productive in SQL projects and you want reviewed scripts, history and drift checks now |
+| B. Side by side | Some teams in SQL projects, some in Flyway Desktop | Each team's route | Flyway on baselined databases; SqlPackage only on databases not yet moved | Teams move at different speeds, or another team or tool still consumes a `.dacpac` |
+| C. Full move | Flyway Desktop, with SSMS or VS Code editing a development database | Flyway Desktop or CLI `diff` and `generate` | Flyway | The team wants one workflow and no `.sqlproj` upkeep |
+
+Start with Path A for a team that is productive in SQL projects. Move to C when the team names a reason of its own, such as `.sqlproj` maintenance cost or a second database platform. Use B wherever a consumer still needs a `.dacpac`. File 28 helps you fit the path to each team's branching and review habits.
+
+## 5. Path A: layer Flyway over SSDT, step by step
+
+This is Redgate's documented route. Do it first on one database, in non-production.
+
+1. Build a development database from the project. Run `dotnet build` (SDK-style) or a Visual Studio build, then publish the `.dacpac` to a dedicated database with your development publish profile, so SQLCMD variables resolve. This becomes Flyway's `development` environment.
+2. Create the Flyway project. `flyway init` writes a fresh project: a `flyway.toml` with default settings, no real environments and an empty migrations folder. Nothing is configured yet, and your assistant shouldn't assume otherwise.
+3. Add the `development` and `shadow` environments. Connection details and credentials go in a git-ignored `flyway.user.toml` or in environment variables, never the committed file (file 10). The shadow uses `provisioner = "clean"`, so use a database Flyway may erase.
+4. Configure before the first capture: static data tables, comparison options and the filter file (`Filter.scpf`). Filter out `[dbo].[__RefactorLog]`, the table SSDT publishing uses to record refactor operations. Otherwise it lands in the schema model and in migrations.
+5. Capture the schema model and commit it.
+6. Create the baseline from a production-representative database: a restored copy of production in non-production, or the environment you trust most (file 07, sections 3 and 4). Review the `B` script.
+7. Baseline each environment once, after the final SqlPackage publish to it (section 10), with `info` before and after (file 07, section 6). If environments differ, align them first or use more than one baseline (file 07, section 5).
+8. For each release, generate the migrations. Publish the latest `.dacpac` to `development`, capture into the schema model, then generate a versioned migration (and an undo script if you use them) with the ticket key in the description.
+9. Open a pull request. Reviewers see the migration, any undo script and the object-level schema model diff. The pull request check builds from scratch on `build` and runs the checks (file 13).
+10. Merge, then deploy with `flyway check` and `flyway migrate` per environment through the pipeline (file 12). Production waits for an approval.
+
+Steps 5, 6 and 8 from the command line:
+
+> Not from Redgate docs — starting point, validate in your environment.
+
+```bash
+flyway init -projectName=<db-name> -databaseType=sqlserver
+# step 5: capture
+flyway diff -diff.source=development -diff.target=schemaModel
+flyway model
+# step 6: baseline (from the production-representative environment)
+flyway diff -diff.source=<baseline-environment> -diff.target=empty
+flyway generate -generate.types=baseline -generate.description=Baseline
+# step 8: each release
+flyway diff -diff.source=development -diff.target=schemaModel
+flyway model
+flyway diff -diff.source=schemaModel -diff.target=migrations -diff.buildEnvironment=shadow
+flyway generate -generate.types=versioned,undo -generate.description=<ticket-key>_short_description
+```
+
+Redgate's command-line setup page shows the shorter `-source=` form. The namespaced form above appears in its parameter tables. Test whichever you use on your engine. In Flyway Desktop, step 8 is five actions: bring development up to date, save to the schema model, generate the migration, verify it, commit and push (file 08).
+
+Generating in a pipeline instead of on a desktop. Redgate documents a job that captures a central development database and adds the generated migration to the pull request, and its `migrations/generate` GitHub Action does this. The automated generation page sits under preview components, so treat it as (preview) and keep Desktop generation as the fallback. Generate on each pull request, not on a schedule: a scheduled capture of a shared database records everyone's changes in one commit that doesn't identify who made each.
+
+## 6. Path B: side by side, one environment at a time
+
+1. List each database, its owning team, and anything downstream that consumes a `.dacpac`.
+2. Move one database at a time through Path A. One Flyway project per database keeps history and filters clean (file 09, section 8 covers several teams on one database).
+3. Move environments in order, lowest first: `development`, `build`, `test`, `uat`, then `production`. Each environment has exactly one deployer at a time. Until an environment is baselined, SqlPackage publishes to it. From the day it's baselined, only Flyway does (section 10).
+4. Keep `.dacpac` consumers whole with an extract step (section 11).
+5. Record each environment's cutover date in your decision log (file 01).
+
+During the overlap, a release can reach `test` through Flyway while `production` still takes a SqlPackage publish. Keep that window short. Before baselining `production`, compare it with `uat` and resolve every difference.
+
+## 7. Path C: the full move
+
+1. Do Path A once for the database.
+2. Developers change a development database (dedicated or shared, file 16) in SSMS, VS Code or Visual Studio, and capture and generate in Flyway Desktop or the CLI. `08 - developer workflows - every way to make a change and how to choose.txt` lists every way to make a change.
+3. Replace each SSDT artifact (section 8).
+4. Keep the `.sqlproj` read-only for one release cycle as a reference, then archive it.
+5. Any team that still needs a `.dacpac` uses section 11.
+
+## 8. Where every SSDT artifact goes
+
+| SSDT artifact | What it does there | Where it goes in Flyway |
+|---|---|---|
+| `.sqlproj` object files | Declared desired state | `schema-model/` (object files the comparison engine writes) plus `migrations/` (what deploys) |
+| `.refactorlog` | Turns renames and schema moves into `sp_rename` or `ALTER SCHEMA ... TRANSFER`; applied keys recorded in `[dbo].[__RefactorLog]` | No equivalent. A rename is a hand-written or hand-edited migration. Read every generated script that touches a renamed object: a comparison can express it as drop and create |
+| Pre-deployment script | Runs before the plan on every publish | One-off work becomes a versioned migration. Work that must run before every deploy becomes a `beforeMigrate` callback |
+| Post-deployment script | Runs after the plan on every publish; often reference data and permissions | Reference data becomes static data tables (Flyway generates ordered INSERT, UPDATE and DELETE). "Always" logic becomes a repeatable `R__` migration or an `afterMigrate` callback. One-off fixes become versioned migrations |
+| SQLCMD variables `$(Name)` | Values from the publish profile or `/v:` | Placeholders `${Name}` with a value per environment. Avoid names that clash with driver properties, such as `serverName` |
+| `$(DatabaseName)` and `USE [$(DatabaseName)]` | Self-reference | Remove. Same-database three-part names aren't needed |
+| Database references (`DatabaseSqlCmdVariable`, `ServerSqlCmdVariable`) | `[$(Server)].[$(Db)].[schema].[object]` | Placeholders, such as `[${OtherDb}].[dbo].[Orders]`. Generated scripts carry the development database's literal names, so edit them to placeholders in review. `shadow` and `build` need the referenced databases, or stubs, so views compile (file 07, section 11; file 29) |
+| Composite projects | One database split across projects | One Flyway project per database, scoped with `Filter.scpf`. Several projects on one database is a design decision (file 09, section 8) |
+| Publish profiles (`.publish.xml`) | Connection, options, SQLCMD values per target | `[environments.<name>]` blocks in `flyway.toml`, with credentials from resolvers or environment variables (section 9) |
+| Publish options (`BlockOnPossibleDataLoss`, `DropObjectsNotInSource` and others) | Run-time behavior of the plan | No run-time equivalent, because the reviewed script is explicit. Comparison options apply when generating; protection moves to review and `check -code` |
+| Static data in the `.dacpac` | Bulk fill on publish | Static data tables tracked row by row and scripted into migrations (file 16, section 6) |
+| SqlPackage `/Action:Publish` | Deploy | `flyway migrate -environment=<name>` |
+| `/Action:Script` | The SQL a publish would run | `flyway check -dryrun` (output path set by `dryRunOutput`) |
+| `/Action:DeployReport` | Changes a publish would make | `flyway check -changes -check.buildEnvironment=build` |
+| `/Action:DriftReport` | Drift on a registered database | `flyway check -drift` |
+| `/Action:Extract` | Make a `.dacpac` from a database | Still SqlPackage, for consumers who need one (section 11) |
+| Build-time validation and code analysis | Syntax and rule warnings | `flyway clean migrate` on `build` against a real engine, plus `flyway check -code` (file 13) |
+| SQLCLR | Needs .NET Framework to build | Flyway deploys whatever T-SQL the migration holds. Prove how assemblies are scripted in your proof of concept (file 05) |
+
+Converted scripts on SQL Server: keep `GO` separators, remove explicit transactions (each migration runs in its own transaction by default), set `executeInTransaction=false` on a script that can't run in one, and remove `CREATE SCHEMA` for schemas Flyway already creates from its `schemas` setting.
+
+Documentation: https://learn.microsoft.com/en-us/sql/tools/sql-database-projects/concepts/refactor-overview, https://documentation.red-gate.com/fd/callback-events-277578832.html, https://documentation.red-gate.com/fd/static-data-279085118.html
+
+## 9. Publish profiles to flyway.toml, and the pipeline swap
+
+Each publish profile becomes one `[environments.<name>]` block in the shared `flyway.toml`. One file holding every environment works in a pipeline: an unset `${env.X}` that belongs to an environment the step doesn't use doesn't break the command, while the environment the step targets needs all of its variables set (file 10). A separate per-environment file loaded with `-configFiles` is optional. It loads in addition to the auto-discovered `flyway.toml`, not instead of it. The dotted placeholder key follows Redgate's linked-server placeholder tutorial.
+
+> Not from Redgate docs — starting point, validate in your environment.
+
+```toml
+# flyway.toml - was Test.publish.xml
+[environments.test]
+url = "${env.FLYWAY_TEST_URL}"
+displayName = "Test"
+# was <SqlCmdVariable Include="Warehouse"> in Test.publish.xml
+flyway.placeholders.WarehouseDb = "<test-warehouse-db-name>"
+
+# was Production.publish.xml
+[environments.production]
+url = "${env.FLYWAY_PRODUCTION_URL}"
+displayName = "Production"
+flyway.placeholders.WarehouseDb = "<production-warehouse-db-name>"
+```
+
+A migration that said `[$(Warehouse)].[dbo].[Orders]` now says `[${WarehouseDb}].[dbo].[Orders]`. Preview the substituted SQL with `flyway check -dryrun` before the first real run. From engine 12.6.2, `${env.X}` works in all Flyway configuration parameters, including those in a file loaded with `-configFiles`. Whether it also covers namespaces other than `flyway` isn't stated, so test that if you rely on it.
+
+The deploy job, before and after:
+
+> Not from Redgate docs — starting point, validate in your environment.
+
+```yaml
+# Before: SQL project
+- run: dotnet build <db-name>.sqlproj -c Release
+- run: SqlPackage /Action:Publish /SourceFile:bin/Release/<db-name>.dacpac /Profile:Production.publish.xml
+
+# After: Flyway (license from FLYWAY_EMAIL and FLYWAY_TOKEN secrets)
+- uses: red-gate/setup-flyway@v3
+  with: { edition: enterprise, i-agree-to-the-eula: true, email: '${{ secrets.FLYWAY_EMAIL }}', token: '${{ secrets.FLYWAY_TOKEN }}' }
+- uses: red-gate/flyway-actions/migrations/deploy@v2
+  env:
+    FLYWAY_PRODUCTION_URL: ${{ secrets.FLYWAY_PRODUCTION_URL }}
+  with:
+    target-environment: production
+    baseline-on-migrate: 'false'   # the action defaults to 'true'; baseline deliberately (section 10)
+```
+
+Redgate's `migrations/checks` action runs the code review, change report, dry run and drift check and uploads the report. Its `migrations/deploy` action runs a drift check before migrating and saves a snapshot by default. File 12 has the complete workflows, approvals and runner choices. On GitHub Enterprise Server, the actions' report uploads may fail (file 12 has the workaround).
+
+## 10. Cutover rules
+
+| Moment | Rule | Why |
+|---|---|---|
+| Before baselining an environment | Run one final SqlPackage publish to it | Applies pending refactorlog renames and any outstanding changes, so the environment matches the baseline |
+| From the final publish until every environment is baselined | Freeze schema merges, or keep the window short | The baseline has to match what is deployed |
+| The day an environment is baselined | Stop SqlPackage publishing to it, for good | Two deployers create drift. A publish with `DropObjectsNotInSource=True` can drop `flyway_schema_history`, because that table isn't in the project. `BlockOnPossibleDataLoss` (default True) may stop that publish instead, but don't rely on it |
+| Same day | Remove the publish step from that environment's pipeline, and remove the publishing account's write rights if it differs from the Flyway deploy account | Make the rule mechanical, not a habit |
+| After the final publish | Stop adding refactorlog entries | They'll never deploy. Renames are migrations |
+| From the first Flyway release | No hand-applied production fixes | That's drift. Ship a migration; gate with `check -drift` (file 15, section 4 has the emergency path) |
+| Path A steady state | Don't treat the `.dacpac` as the deploy artifact | The reviewed migration is the artifact. The `.dacpac` only builds `development` |
+
+Record every cutover date in your decision log (file 01). If someone asks to "just publish once more" to a baselined environment, the answer is no: make the change in the project, generate a migration and deploy it.
+
+## 11. A dacpac for a team that still needs one
+
+Another team, a reporting tool or a vendor may still need a `.dacpac`. Make one from a Flyway-managed database after each deployment. Redgate's Product Learning article shows this as an `afterMigrate` callback. A separate pipeline step after `migrate` does the same and keeps credentials out of the callback:
+
+> Not from Redgate docs — starting point, validate in your environment.
+
+```yaml
+- name: Extract a dacpac for teams still on SQL projects
+  shell: pwsh
+  env:
+    SOURCE_CONNECTION: ${{ secrets.TEST_READONLY_CONNECTION_STRING }}
+    FLYWAY_TEST_URL: ${{ secrets.FLYWAY_TEST_URL }}
+  run: |
+    $info = flyway info -environment=test -outputType=json | ConvertFrom-Json
+    $version = $info.schemaVersion   # field shown in the JSON output on Redgate's Info command page
+    SqlPackage /Action:Extract /SourceConnectionString:"$env:SOURCE_CONNECTION" /TargetFile:"dacpac/<db-name>-$version.dacpac"
+```
+
+- The extracted `.dacpac` includes `flyway_schema_history`. Published elsewhere it creates that table, which then holds nothing, and a later `flyway migrate` there would try every migration against objects that already exist. Tell consumers to drop the table after publishing, or baseline that copy (file 07). SSDT tooling has no option to leave the table out of an extract.
+- Data is excluded by default. `/p:ExtractAllTableData=true` adds it and makes the file large.
+- A `.dacpac` that references other databases, server objects or CLR assemblies needs those to exist where it's published.
+
+Documentation: https://www.red-gate.com/hub/product-learning/flyway/flyway-and-ssdt-extracting-a-dacpac-from-a-flyway-managed-database/
+
+## 12. Merging work from a branch
+
+In Flyway, merging a branch means adding its migration files, then resolving conflicts on objects both branches touched.
+
+- Path A teams merge the SQL project in Git as they do today. The release owner, or the pull request job, generates one migration from the merged state. Branches don't each carry their own migrations.
+- Teams generating per branch: before merging, pull `main`, bring your development database up to date, re-capture, and regenerate your migration if the same object changed on `main`. Regenerate rather than hand-patch a stale script. File 09 covers the version collision check and `outOfOrder`.
+- Never edit a migration that has run anywhere that matters. Fix forward with a new one.
+
+Redgate's Product Learning article on merging branch work also shows an older route: script the change with `SqlPackage /Action:Script`, comparing the branch's `.dacpac` with the `.dacpac` from the branch point, then strip SQLCMD lines, `USE`, transactions and `CREATE SCHEMA` and save it as a versioned migration. Compare with the branch point, never the live shared development database, or the script removes work others merged since you branched. That route still works, but the Flyway comparison in section 5 replaces it.
+
+Documentation: https://www.red-gate.com/hub/product-learning/flyway/flyway-and-ssdt-merging-work-from-a-branch/
+
+## 13. Training the team
+
+Developers on Path A need items 1 to 3. Release owners and DBAs need all six.
+
+1. Applied migrations are fixed. Checksums are validated, so fix forward with a new version.
+2. Data changes, renames and splits are explicit scripts. There's no "publish makes it match".
+3. Merging is adding files (section 12). Version numbers and ordering follow your project's settings: the engine defaults `outOfOrder` to false, while projects created by `flyway init` or Desktop write `true`, so read your `flyway.toml` (file 09, section 5).
+4. Static data tables and repeatable migrations replace post-deployment scripts. Placeholders replace `$(var)`.
+5. Reading the evidence: `flyway info`, the check report, the dry-run SQL and drift results (file 22 covers errors).
+6. Cutover rules (section 10), and the emergency path (file 15, section 4).
+
+A practical format is a lab on a copy of one real project following Path A, then pairing on the first two real releases. File 27 has a guided track your assistant can run.
+
+## 14. What you gain, stated factually
+
+Each point comes from Redgate's or Microsoft's documentation.
+
+- The reviewed script is the script that runs. Redgate's SSDT page says the exact script in version control is applied to downstream environments after pull request sign-off. SqlPackage works out its plan per target at deployment time.
+- Deployment history lives in each database. `flyway_schema_history` records what was applied, when, by which account and how long it took. Put the ticket key in the description and a DBA can answer "which ticket added this column" with one query (file 30).
+- Drift checks before every deployment and on a schedule, and undo scripts generated alongside migrations for lower environments (section 3 compares both with SqlPackage; file 14).
+- Version ordering across teams. Migrations apply in version order, and a pull request check catches collisions before merge (file 09).
+- Code review on every change: the migration in the pull request, plus `check -code` rules with SARIF output for GitHub (file 13).
+- Dry-run reports. `check -dryrun` and `check -changes` show what a deploy would run before approval. Redgate's check page names "a record of what the check results were for audit or reporting purposes" among their uses.
+- GitHub Actions maintained by Redgate: `setup-flyway`, and `flyway-actions` for checks, deployment, state-based prepare and deploy, and generation (file 12).
+- Deployments run no comparison at deploy time, because the script already exists.
+
+## 15. In daily use
+
+- "Can I publish the dacpac to `test` just this once?" Not after `test` is baselined (section 10).
+- "Where did my post-deployment script go?" Section 8: static data, a repeatable or a callback.
+- "The generated script drops and recreates a column I renamed." Replace it with `sp_rename` in the migration before merging.
+- "Reporting needs a dacpac of `uat`." Section 11.
+- "Which environments are on Flyway yet?" The decision log (file 01), cutover dates.
+
+## 16. Limits
+
+- Flyway doesn't read a `.dacpac` or `.sqlproj`. Build a database from it and use that as `development`.
+- There's no refactorlog equivalent and no run-time `BlockOnPossibleDataLoss`. Renames are written by hand; protection moves to review and code rules.
+- Comparison doesn't infer renames, splits, NOT NULL columns without defaults on populated tables, or data moves. Write those by hand.
+- Automated generation in a pipeline is preview (section 5).
+- Whether the comparison engine detects renames and how it scripts SQLCLR assemblies aren't settled by the pages read for this library. Prove them in your proof of concept before relying on them. Static data tables can filter rows with `whereClause` on SQL Server (file 07, section 7).
+- The Product Learning SSDT series predates the current configuration format and uses `flyway.conf`. The concepts hold; take syntax from current documentation.
+- SqlPackage facts here come from Microsoft Learn and change with its releases. Check a property before relying on it.
+
+## 17. Instructions for the AI assistant using this file
+
+- Check the decision log (file 01) for the path and cutover dates before answering. If none is recorded, ask which databases are in scope and suggest Path A first.
+- Look at the project before advising. A `flyway.toml` with default settings, no real environments and an empty migrations folder is fresh from `flyway init` or Desktop (file 10, section 3): start at section 5, step 3. Don't assume baselines or pipelines exist.
+- Never suggest SqlPackage Publish to an environment the decision log (file 01) records as baselined. Never suggest Flyway and SqlPackage both deploying to one database.
+- When comparing with SQL projects, state mechanics for both sides from section 3 or Microsoft Learn. Don't call either better, and don't call SSDT deprecated.
+- Treat every generated script touching a renamed object, a cross-database reference or a NOT NULL column as needing a person's edit and review.
+- Never edit an applied migration. Never automate `repair`. Run `clean` only on `build`, `shadow` or scratch databases.
+- Mark code you add that isn't in this file with the not-from-Redgate-docs line.
+- Answer in the language the person writes in. Keep commands, keys, file names and error text in English.

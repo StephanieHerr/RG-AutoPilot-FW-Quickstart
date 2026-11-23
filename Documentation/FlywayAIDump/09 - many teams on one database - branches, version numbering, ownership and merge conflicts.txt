@@ -1,0 +1,342 @@
+Flyway Enterprise AI library - file 09 of 32
+Many teams on one database - branches, version numbering, ownership and merge conflicts
+Flyway reference library, October 2026. Generic guidance written for your AI assistant. It contains no data from your environment, and you shouldn't add any to these files.
+
+What this covers: How several teams change one SQL Server database at once. Branching strategies (trunk, GitHub flow, GitFlow, release branches, forks) and how Flyway versions behave in each, timestamped versions and Desktop naming, `validateMigrationNaming`, `outOfOrder`, `ignoreMigrationPatterns`, a pull request collision check, schema ownership with `CODEOWNERS` and filters, one project or several, merge conflicts in the schema model and in migrations, generating at merge for three or more teams, release trains and `cherryPick`, what to standardize and what teams may choose, and rules for contractors.
+
+Not in this file: Each developer's authoring routes (file 08, developer workflows), the end-to-end team design (file 28, workflow architect), situation cards such as a monolith or many databases (file 29, scenario playbooks), `flyway.toml` and secrets (file 10), the pipeline, hotfixes and rollback (file 11), the GitHub Actions workflows (file 12), reading the errors (file 22), ticket keys (file 30).
+
+Contents:
+1. The three multi-team problems
+2. Branching strategies and how Flyway versions behave in each
+3. How versions are formed: timestamps, Desktop naming and validateMigrationNaming
+4. Numbering schemes
+5. outOfOrder and ignoreMigrationPatterns: what they do and where to allow them
+6. A pull request check for duplicate and too-low versions
+7. Ownership: schemas, CODEOWNERS and filters
+8. One project or several on one database
+9. Merge conflicts in the schema model
+10. Merge conflicts in migrations
+11. Where migrations get generated: per branch, in the pull request, or at merge
+12. Release trains and cherryPick
+13. Standardize or flex across teams
+14. Working with application code: expand and contract
+15. Contractors, forks and integrated teams
+16. In daily use
+17. Limits
+18. Instructions for the AI assistant using this file
+
+## 1. The three multi-team problems
+
+Three things go wrong when many teams share one database: two branches pick the same or an out-of-order version; two teams change the same object; and one team's change reaches an environment before another team's lower-numbered one. Everything below handles one of those three.
+
+## 2. Branching strategies and how Flyway versions behave in each
+
+Redgate's version control page says Flyway "is not opinionated about branching strategy", discourages long-lived branches and prefers feature flags and continuous integration (https://documentation.red-gate.com/fd/version-control-273973444.html). Pick the strategy your application code already uses; the database follows.
+
+| Strategy | How Flyway versions behave | Main risk | Controls |
+|---|---|---|---|
+| Trunk-based (tiny branches, merged within a day) | Few branches in flight, so few parallel versions | A change merged without the pull request checks | Keep pull requests mandatory; collision check (section 6) |
+| GitHub flow (short feature branches, pull request to `main`, deploy from `main`) | Each branch generates the next number plus a timestamp. A branch merged later can carry a lower version than one already deployed to `test` | Ignored migrations in `test` and later | Collision check forces a renumber before merge; branches measured in days |
+| GitFlow (`develop`, `release/*`, `hotfix/*`, `main`) | Features merge to `develop`; a hotfix from `main` sorts below migrations already on `develop` | Hotfix Ignored on `develop` databases; same fix applied twice | Hotfix as a new versioned migration, merged back to `develop`; one reviewed `-outOfOrder=true` run where it sorts low (section 5); `skipExecutingMigrations` with `cherryPick` where it was hand-applied |
+| Release branches (cut from `main`, stabilized while `main` moves on) | Fixes cherry-picked from commits already on `main` keep their versions. A migration authored only on the release branch is a hotfix | Two chains diverging | Assign versions once, on `main`; tag every production release; hotfix branch starts at the tag |
+| Long-lived maintenance or variant branches | An old release needs patches without newer migrations | Version collisions between trunk and patch numbers | Leave version gaps or keep patches off trunk numbers, per-variant `locations`, `target` for old releases (https://www.red-gate.com/hub/product-learning/flyway/forks-in-flyway-database-development-work/, older syntax) |
+| Forks (contributors fork the repository) | Same as GitHub flow once merged | Pull requests from forks get no repository secrets, so database checks can't run | Contributors use branches in the main repository (section 15) |
+
+Whatever the strategy: one `main`, always releasable; a short branch per ticket, named with the ticket key; the migration, undo and schema model change merged together. The longer a branch lives, the more migrations land underneath it.
+
+## 3. How versions are formed: timestamps, Desktop naming and validateMigrationNaming
+
+A versioned migration is `V<version>__<description>.sql` with a double underscore; the matching undo is `U<version>__<description>.sql`; a repeatable is `R__<description>.sql`. A version is dotted or underscore-separated numbers, compared numerically part by part, and must be unique.
+
+Desktop names generated migrations with an incremented number plus a timestamp, for example `V002_20261019143000__<ticket-key>_add_status.sql`, which is version `002.20261019143000`. Redgate's tutorial says the timestamp is there to minimize merge conflicts, and that removing it from one saved script makes later scripts increment without it (https://documentation.red-gate.com/fd/tutorial-tweaking-version-numbering-162103499.html). Timestamps are UTC from engine 13.7.0. Rename only the description after `__`, never the version.
+
+`[flyway.generate] timestamp` takes `always`, `auto` (default) or `never` (https://documentation.red-gate.com/fd/flyway-generate-timestamp-setting-277579096.html). Set `always` in `[flyway.generate]` and `[flyway.add]` so Desktop, the CLI and AI agents agree.
+
+`validateMigrationNaming` defaults to `false`, which means a misnamed file (a single underscore, a lowercase `v`) is silently ignored (https://documentation.red-gate.com/fd/flyway-validate-migration-naming-setting-277579047.html). Set it `true` so Flyway fails and names the file. Redgate's SQL Server sample project sets it.
+
+| `flyway info` state | Meaning |
+|---|---|
+| Pending | Not yet applied, will run |
+| Ignored | Skipped by `migrate`: usually a lower version with `outOfOrder` off |
+| Out of Order | Applied after a higher version |
+| Missing | Applied, but the file is gone or renamed |
+
+With engine defaults (`outOfOrder = false`, `validateOnMigrate = true`, `ignoreMigrationPatterns = "*:future"`), a lower migration that arrives late is Ignored and `migrate` fails validation. That loud failure is what you want. Two files with exactly the same version fail with `DUPLICATE_VERSIONED_MIGRATION`.
+
+## 4. Numbering schemes
+
+| Scheme | Example | Collisions | Notes |
+|---|---|---|---|
+| Sequential | `V018__add_status.sql` | Every parallel branch takes the same number | Readable; plan on a collision per parallel branch |
+| Number plus timestamp (Desktop default) | `V018_20261019143000__add_status.sql` | No duplicates. A later-merged branch can sort lower | The recommended scheme for parallel teams |
+| Pure timestamp | `V20261019143000__add_status.sql` | No duplicates, same out-of-order risk | Use seconds; minutes can duplicate |
+| Team-prefixed ranges | `V100.014__` for one team, `V200.007__` for another | None between teams | Order follows the range, not merge time, so a lower range landing after a higher one is always out of order. Ranges also run out |
+
+Recommendation: one timestamp-based scheme per project, standardized across every team that shares the project. Put the team in the description or folder, not the version.
+
+Switching schemes is safe only if every new version is higher than the highest existing one. Record the scheme in your decision log (file 01).
+
+## 5. outOfOrder and ignoreMigrationPatterns: what they do and where to allow them
+
+`outOfOrder`: with versions 1.0 and 3.0 applied and 2.0 found, `outOfOrder = true` applies 2.0 instead of ignoring it, and `info` shows it as Out of Order (https://documentation.red-gate.com/fd/flyway-out-of-order-setting-277579015.html). The engine default is `false`. Projects created by `flyway init` or Desktop write `outOfOrder = true`, so read your own `flyway.toml` and every `ci/` file before saying what an environment does.
+
+The cost: environments can apply migrations in different orders, and a fresh build replays in version order, which isn't the order production saw. Two migrations that touch one object can then give different results.
+
+Two stances work. Decide once per project, record it in your decision log (file 01), and keep the same value on every shared environment of the project.
+
+| | Strict | Permissive |
+|---|---|---|
+| Setting | `false` on `build`, `test`, `uat`, `production` | `true` on every environment, as in Redgate's SQL Server sample |
+| How lateness is handled | The collision check (section 6) forces a renumber above `main` before merge. A hotfix that sorts low gets one reviewed `-outOfOrder=true` run | Late migrations apply automatically |
+| Extra safeguard | None needed beyond the check | The pull request build runs both orders: from empty in version order, and on a production-shaped copy in arrival order. In-flight migrations must not touch the same object |
+| Fits | Regulated release control; one order everywhere | Many teams merging often, with a strong build |
+
+`ignoreMigrationPatterns` (default `"*:future"`) tells `validate` which states to tolerate: `missing`, `pending`, `ignored`, `future` (https://documentation.red-gate.com/fd/flyway-ignore-migration-patterns-setting-277579002.html). Setting it replaces the default, so list `"*:future"` again if you want to keep it. A shared integration database that several branches deploy to before merge can use `ignoreMigrationPatterns = ["*:missing","*:future"]` with `outOfOrder = true`, non-production only, refreshed on a cadence.
+
+Never silence the failure with `*:ignored` (the migration then never runs unless `outOfOrder` is on), `validateOnMigrate = false`, or `repair`.
+
+## 6. A pull request check for duplicate and too-low versions
+
+Flyway has no pull request check for "lower than main". This script fails when the branch adds a versioned migration that isn't higher than every versioned migration on the target branch, or when two files share a version. It needs no database, only a checkout with full history, and runs in Windows PowerShell 5.1 and PowerShell 7. `-Dir` is relative to the repository root. `-cmatch` makes the file match case-sensitive, and `--no-renames` makes a renumbered file count as new.
+
+> Not from Redgate docs — starting point, validate in your environment.
+
+```powershell
+# scripts/check-migration-versions.ps1 -Target origin/main -Dir <project-folder>/migrations
+param([string]$Target = 'origin/main', [string]$Dir = 'migrations')
+$ErrorActionPreference = 'Stop'
+git merge-base $Target HEAD | Out-Null
+if ($LASTEXITCODE -ne 0) { Write-Host "FAIL  can't find $Target or its merge base; fetch full history"; exit 2 }
+
+function Get-Ver([string]$path) {
+  $n = [IO.Path]::GetFileNameWithoutExtension($path).Substring(1)
+  $n = ($n -split '__')[0] -replace '_', '.'
+  $parts = @($n.Split('.') | ForEach-Object { [System.Numerics.BigInteger]::Parse($_) })
+  while ($parts.Count -gt 1 -and $parts[-1].IsZero) { $parts = @($parts[0..($parts.Count - 2)]) }
+  ,$parts
+}
+function Compare-Ver($a, $b) {
+  for ($i = 0; $i -lt [Math]::Max($a.Count, $b.Count); $i++) {
+    $x = if ($i -lt $a.Count) { $a[$i] } else { [System.Numerics.BigInteger]::Zero }
+    $y = if ($i -lt $b.Count) { $b[$i] } else { [System.Numerics.BigInteger]::Zero }
+    $c = [System.Numerics.BigInteger]::Compare($x, $y); if ($c -ne 0) { return $c } }
+  0
+}
+$isV = { param($p) (Split-Path $p -Leaf) -cmatch '^V.*\.sql$' }
+
+$max = ,[System.Numerics.BigInteger]::Zero
+git ls-tree -r --name-only $Target -- $Dir | Where-Object { & $isV $_ } | ForEach-Object {
+  $v = Get-Ver $_; if ((Compare-Ver $v $max) -gt 0) { $max = $v } }
+Write-Host "Highest version on ${Target}: $($max -join '.')"
+
+$fail = $false
+git diff --name-only --no-renames --diff-filter=A "$Target...HEAD" -- $Dir | Where-Object { & $isV $_ } | ForEach-Object {
+  $v = Get-Ver $_
+  if ((Compare-Ver $v $max) -gt 0) { Write-Host "OK    $_" }
+  else { Write-Host "FAIL  $_ ($($v -join '.')) is not higher than $($max -join '.'). Renumber before merge."; $fail = $true } }
+
+$dups = git ls-files -- $Dir | Where-Object { & $isV $_ } | ForEach-Object { (Get-Ver $_) -join '.' } |
+  Group-Object | Where-Object Count -gt 1
+if ($dups) { Write-Host "FAIL  duplicate versions: $($dups.Name -join ', ')"; $fail = $true }
+if ($fail) { exit 1 }
+```
+
+> Not from Redgate docs — starting point, validate in your environment.
+
+```yaml
+  versions:
+    runs-on: <runner-label>
+    steps:
+      - uses: actions/checkout@<major-tag>
+        with:
+          fetch-depth: 0
+      - shell: pwsh
+        run: ./scripts/check-migration-versions.ps1 -Target "origin/${{ github.base_ref }}" -Dir "<project-folder>/migrations"
+```
+
+On a Windows runner without PowerShell 7, use `shell: powershell`. Test it on a throwaway branch with a deliberately low version before requiring it. Require "branches up to date before merging", or a passing check goes stale when another pull request merges. File 12 has the full workflow.
+
+The rule it enforces: a migration that has run on no shared database can be renumbered freely. Merge `main`, regenerate (file 08, section 12) or rename above the highest version with a fresh UTC timestamp, rename the `U` file too, and rerun. Never renumber a migration that has run on `test` or later: the old version shows Missing and the renamed file runs a second time.
+
+## 7. Ownership: schemas, CODEOWNERS and filters
+
+If teams own separate schemas, make that ownership real in review and in tooling.
+
+Review with GitHub `CODEOWNERS` plus a branch rule requiring code owner review. On SQL Server, Desktop's schema model groups files by object type, with the schema in the file name, so match by name. Migrations carry no schema, so give each team a subfolder inside `migrations/` (one version sequence, scanned with the rest of the location):
+
+> Not from Redgate docs — starting point, validate in your environment.
+
+```text
+# .github/CODEOWNERS
+/<project-folder>/schema-model/**/<team_a_schema>.*     @<org>/<team-a>
+/<project-folder>/schema-model/**/<team_b_schema>.*     @<org>/<team-b>
+/<project-folder>/migrations/<team-a>/                  @<org>/<team-a>
+/<project-folder>/migrations/<team-b>/                  @<org>/<team-b>
+/<project-folder>/flyway.toml                           @<org>/<dba-team>
+/<project-folder>/Filter.scpf                           @<org>/<dba-team>
+/<project-folder>/ci/                                   @<org>/<dba-team>
+/.github/workflows/                                     @<org>/<dba-team>
+```
+
+Check the file shape with one sample commit: the folder and file names your project actually produces win. Code owners on private repositories need a paid GitHub plan; check your plan's documentation. A folder isn't a fence: a migration in one team's folder can still alter another team's object, so reviewers read the content.
+
+Filters keep objects a team doesn't own out of capture, generation, change reports and drift checks. On SQL Server the filter is a SQL Compare filter file, `Filter.scpf` in the project root by default, or the path in `[redgateCompare.sqlserver] filterFile`. The environment `schemas` setting is ignored by `diff` and `prepare` on SQL Server, so the filter file is your comparison scope. Filters apply after comparison, and Flyway pulls in objects your selection depends on even when the filter excludes them, so a script can still touch another team's object.
+
+A filter excluding another team's tables (composed from Redgate's filter format; save one from Desktop's filter editor to get the element names for other object types):
+
+> Not from Redgate docs — starting point, validate in your environment.
+
+```xml
+<?xml version="1.0" encoding="utf-8" standalone="yes"?>
+<NamedFilter version="1" type="SQLCompareFilter">
+  <FilterName>team-a</FilterName>
+  <Filter version="1" type="DifferenceFilter">
+    <FilterCaseSensitive>False</FilterCaseSensitive>
+    <Filters version="1">
+      <None version="1"><Include>True</Include><Expression>TRUE</Expression></None>
+      <Table version="1"><Include>False</Include><Expression>((@SCHEMA = '<other_team_schema>'))</Expression></Table>
+    </Filters>
+  </Filter>
+</NamedFilter>
+```
+
+## 8. One project or several on one database
+
+| | One project | One project per team (separate history tables) |
+|---|---|---|
+| Version space | One sequence, all teams | One per project, no cross-team collisions |
+| History | `flyway_schema_history` | A distinct `table` per project |
+| Cadence | One release train | Teams release independently |
+| Cross-team objects | Natural | You orchestrate deploy order |
+| Review | Code owners per subfolder | Code owners per project |
+
+For several projects, set a distinct `table` in each project's `flyway.toml` and give each its own filter file. On SQL Server, Redgate's docs say not to set `schemas` in Desktop; unset, each history table lands in the connecting user's default schema, so the names must differ. If you do set `schemas`, keep the lists disjoint: Flyway creates and cleans the listed schemas.
+
+> Not from Redgate docs — starting point, validate in your environment.
+
+```toml
+# team-a/flyway.toml (team-b/flyway.toml differs in table and filter)
+[flyway]
+locations = ["filesystem:migrations"]
+table = "flyway_schema_history_team_a"
+cleanDisabled = true
+
+[redgateCompare.sqlserver]
+filterFile = "Filter.scpf"
+```
+
+What you take on by splitting: each project's shadow and build databases hold only its own objects, so cross-project references fail to build unless provided; checks see whatever each filter leaves in; nothing in Flyway serializes two projects deploying to one database, so use one GitHub Actions `concurrency` group per database; and Flyway doesn't stop one project touching another's schema. Prove the combination in the proof of concept.
+
+Don't split when schemas reference each other heavily, a release must be atomic across schemas, or there are few teams. Start with one project and split only when collisions or cadence hurt.
+
+## 9. Merge conflicts in the schema model
+
+Each object is one file, so two teams conflict in Git only when they change the same object. Redgate's documented resolution (https://documentation.red-gate.com/fd/tutorial-resolve-merge-conflicts-277580692.html):
+
+1. Desktop shows the merge conflict and blocks push and pull until it's resolved.
+2. Under Uncommitted changes, click Resolve. Desktop runs `git mergetool` and opens the file in your editor. Set `git config --global mergetool.keepBackup false` to avoid leftover backup files.
+3. Resolve the markers, for example Accept Both Changes, then fix the SQL syntax (a missing comma between columns is typical). Save.
+4. Update development: Refresh, select the object, Apply, Apply now.
+5. Commit and push.
+
+Add one check after step 4: compare development against the model. It must show no differences, which proves the comparison engine parsed what Git merged.
+
+> Not from Redgate docs — starting point, validate in your environment.
+
+```powershell
+flyway diff "-diff.source=development" "-diff.target=schemaModel"
+```
+
+If the conflict is hard to read, the fallback is to accept `main`'s file, update your database from it, redo your change in the database and re-capture. On a shared development database, skip step 4: the database already holds both changes.
+
+Semantic conflicts don't show in Git: one developer drops a column another developer's new view uses. The pull request build from empty, a test migrate on a clean shadow and the drift and changes checks catch them (file 13).
+
+## 10. Merge conflicts in migrations
+
+Different migration files rarely conflict in Git. The danger is semantic. Two migrations that each `ALTER` the same procedure leave the later one's whole body in place and silently drop the other's edit. A repeatable (file 08, section 13) or the schema model diff makes the clash visible.
+
+When the same object is involved: merge `main` into your branch, update your development database from the merged model, redo your change, regenerate the migration from the merged state (file 08, section 12), and renumber above `main`. Delete only a migration no shared environment has run. If both migrations already ran in different orders, stop and write a new forward migration agreed with the DBA.
+
+## 11. Where migrations get generated: per branch, in the pull request, or at merge
+
+| Option | Collision risk | Review | Fits |
+|---|---|---|---|
+| A. Each developer generates on their branch (Desktop default) | Highest | The author reviews; the pull request shows the script | One or two teams, short branches |
+| B. Generated in the pull request pipeline | Medium | Reviewers see the script in the pull request | Developers without Flyway tooling (file 08, route 8) |
+| C. Branches share the schema model; one migration generated at merge or release | Lowest: one generator, one chain | Release-level review | Three or more teams on one database; release trains |
+
+Option C follows Redgate's combined approach: the schema model is how developers share changes, migrations are what's deployed (https://documentation.red-gate.com/flyway/deploying-database-changes-using-flyway/deployment-approaches-with-flyway/combined-state-and-migrations-approach). Rules that make it work:
+
+- Branches commit schema model changes only. Data motion, renames and splits are hand-written with `flyway add` at merge, because the model can't carry them.
+- One generator at a time per project: a release owner, or a pipeline job on merge to `main` with a `concurrency` group.
+- Show reviewers the prospective script in the pull request (generate to a preview location that isn't committed), then generate for real after merge.
+- The generated migration still goes through the full checks before `test`.
+
+Using A for one or two teams and C for three or more is a design judgment, not a Redgate rule. File 28 reference designs B and D lay out the jobs.
+
+## 12. Release trains and cherryPick
+
+A release train ships everything merged since the last release, in version order. It works because `main` is always releasable and unfinished features sit behind flags (section 14). Every environment stays in the same order.
+
+`cherryPick` is a setting, not a command: `flyway migrate -cherryPick=<version>,...` runs only the listed migrations, in the order given; use full versions, timestamps included (https://documentation.red-gate.com/fd/tutorial-cherry-pick-pending-migrations-313494295.html). Skipped migrations show as Ignored and can be picked later, for example with `-outOfOrder=true`. Uses: defer one slow migration to a window, or hold one back from a release.
+
+> Not from Redgate docs — starting point, validate in your environment.
+
+```bash
+flyway info -configFiles=ci/uat.toml -environment=uat
+flyway migrate -configFiles=ci/uat.toml -environment=uat "-cherryPick=<version-1>,<version-3>"
+```
+
+Pass it on the command line for one run, never in a `ci/` file. It makes environments diverge, and every held-back migration is a future out-of-order run. Don't use it to ship a feature early; use a flag. Migration tags (preview) select sets of migrations but need `outOfOrder`, can't combine with `cherryPick` or `target`, and don't support repeatables.
+
+## 13. Standardize or flex across teams
+
+| Standardize for every team on a project | Each team may choose |
+|---|---|
+| Numbering scheme, `timestamp = "always"`, `validateMigrationNaming = true` | Authoring route (file 08) |
+| One `outOfOrder` stance, same on every shared environment | Branch naming |
+| Collision check, build from empty and code review as required checks | GitHub flow or release branches, within short-lived guardrails |
+| `CODEOWNERS` for config, filters and workflows | Folder layout inside its `migrations/` subfolder |
+| Generation option (section 11) per project | Dedicated database hosting (file 16) |
+| The operations hand-off and production gate (file 28, section 4) | Extra checks on top |
+
+## 14. Working with application code: expand and contract
+
+Make each database change backward compatible, so old and new application versions both work. Expand (add the new column or table), migrate (move data, dual-write), contract (a later migration removes the old shape once nothing uses it). Deploy the database first, the application second, and ticket the contract step when you write the expand. Teams can then deploy independently against one database.
+
+During the migrate step, something has to keep old and new shapes in step. Redgate's Product Learning series on shared-database blue-green deployment compares four techniques, in rising order of complexity: an abstraction layer (views or procedures the application calls), application dual-writes, trigger-based synchronization, and versioned parallel schemas behind synonyms. It notes that synonym-based schemas are harder to see in SSMS and can confuse less experienced staff and AI assistants. Start with the simplest technique that works for the change (https://www.red-gate.com/hub/product-learning/flyway/shared-database-blue-green-deployments/ and https://www.red-gate.com/hub/product-learning/flyway/shared-database-blue-green-deployments-in-practice/).
+
+## 15. Contractors, forks and integrated teams
+
+The same rules, checks and review apply to everyone.
+
+- Access goes through pull requests, not the database: write access to branches, no environment secrets, no credentials for `test`, `uat` or `production`.
+- GitHub doesn't pass repository secrets to workflows triggered from forks, so database checks can't run on fork pull requests. Use branches of the main repository.
+- Each person gets a dedicated development database (file 16).
+- `CODEOWNERS` (section 7) applies to everyone. Remove access when the engagement ends.
+
+## 16. In daily use
+
+Developers: merge `main` before the pull request, run the section 6 script locally, renumber if it fails. Reviewers: read the schema model diff for objects another team owns. DBAs, weekly: find pull requests open for days, and run `flyway info` against `test` for Ignored or Out of Order rows.
+
+## 17. Limits
+
+- Flyway has no built-in pull request check for versions below `main`.
+- Timestamps reduce but don't remove out-of-order merges.
+- `outOfOrder` can't make two dependent migrations safe in either order.
+- Flyway doesn't stop a migration touching another team's schema; review and code owners do.
+- The schema model merges as text; there's no object-aware merge.
+
+## 18. Instructions for the AI assistant using this file
+
+- Ask for `flyway.toml` and any `ci/` file the step also loads before saying what `outOfOrder` is set to. A fresh project's `outOfOrder = true` was written by the generator, not chosen.
+- When "a migration didn't run", ask for `flyway info` from each environment, then apply section 3.
+- Suggest renumbering only for a migration no shared environment has run.
+- Never suggest `*:ignored`, `validateOnMigrate = false`, `repair` for an Ignored migration, or different `outOfOrder` values across a project's shared environments.
+- Never advise team-prefixed ranges without stating they force out-of-order runs.
+- For schema model conflicts, give Redgate's steps in section 9 plus the re-capture check.
+- Treat the `CODEOWNERS` patterns as a shape to adapt to the files the project produces.
+- `cherryPick` is a setting. Pass it per run, never in a `ci/` file.
+- Mark composed scripts, YAML, XML, TOML and `CODEOWNERS` as composed.
+- Answer in the language the person writes in. Keep commands, keys, file names and error text in English.

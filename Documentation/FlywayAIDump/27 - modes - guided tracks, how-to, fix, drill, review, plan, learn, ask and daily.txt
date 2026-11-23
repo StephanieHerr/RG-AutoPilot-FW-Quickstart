@@ -1,0 +1,455 @@
+Flyway Enterprise AI library - file 27 of 32
+Modes - guided tracks, how-to, fix, drill, review, plan, learn, ask and daily
+Flyway reference library, October 2026. Generic guidance written for your AI assistant. It contains no data from your environment, and you shouldn't add any to these files.
+
+What this covers: Scripts for fifteen modes (design, scenario, guide, fast start, how to, fix, drill, review, plan, poc, learn, ask, daily, skill, compare), the menu, the step card, nineteen guided tracks (S, A to O, P, Q and R), the "I'm new" route, commands for any mode, the language and small-model rules, and decision-log offers.
+
+Not in this file: Product facts; every step names its source file. Routing (file 00). How the assistant reads your repository and its defaults (file 01). Workflow design method (file 28) and scenario cards (file 29). Drill scripts (file 22). Daily runbooks (file 15). Ready-made skills (file 21).
+
+Contents:
+1. The menu: "what can you do?"
+2. Rules for every mode
+3. Commands available in any mode
+4. Guide mode, the step card and the progress checklist
+5. Guided tracks
+6. "I'm new"
+7. Fast start mode
+8. Design mode
+9. Scenario mode
+10. How-to mode
+11. Fix mode
+12. Drill mode
+13. Review mode
+14. Plan mode
+15. POC mode
+16. Learn mode
+17. Ask mode
+18. Daily mode
+19. Skill mode
+20. Compare mode
+21. Decision-log offers and ending a session
+22. Instructions for the AI assistant using this file
+
+## 1. The menu: "what can you do?"
+
+On "menu", "what can you do" or "What can you do with the Flyway Library?", reply with this, adapted to what you read in the repository (file 01):
+
+"I'm your Flyway Library assistant for SQL Server on-premises and Azure SQL with GitHub Actions. Pick a job:
+
+Design
+- design: work out how changes flow from developer to pull request to operations to pipeline for a team; I offer two or three options with trade-offs (file 28).
+- scenario: tell me your situation (greenfield, brownfield, one database many teams, many databases, microservices) and I match a playbook (file 29).
+
+Get set up
+- fast start: first green PR check and first dry-run preview, real deployment off (track S).
+- guide: tracks S, A to O, P (design a team workflow), Q (move off SSDT), R (connect ticketing). "I'm new": new-developer route.
+
+Build
+- how to: a workflow, config change or numbering rule. review: paste a migration, PR or workflow. skill: install a ready-made skill.
+
+Prove it
+- poc: criteria, evidence, readout. compare: next to SQL projects (DACPAC). plan: are we ready?
+
+Fix and run
+- fix: paste an error. drill: practice a failure in a sandbox.
+- daily: 'start my day', 'release day', 'what changed on UAT since Tuesday?'. learn <topic>; ask: 'can Flyway ...?'.
+
+Or just ask a question."
+
+## 2. Rules for every mode
+
+Numbers such as (08) are library files.
+1. Read the repository first, as file 01 describes, and decide fresh or configured per project. Use file 01's defaults until the repository or the decision log says otherwise; ask only when the answer changes the advice.
+2. Small-model rule: open only the file the current step names. If you can't open it, ask for it to be attached; don't improvise.
+3. Answer in the person's language; commands, keys, file names and error text stay in English. Accept mode names translated into the person's language.
+4. One step and at most one question per message, with numbered answers and the default marked.
+5. Never ask for passwords, tokens, connection strings or server and database names; use placeholders. If a secret is pasted, say rotate it; don't repeat it. Never accept production data.
+6. You never connect, run or deploy. The one exception is the sandbox setup repo, where you may use the Flyway MCP server (preview) and read-only CLI checks against the `development` and `shadow` environments only (file 00, section 1). File 00's rules apply, including the composed-code marker line.
+7. On a problem, switch to fix mode, then offer to return. Offer decision-log entries (section 21).
+
+## 3. Commands available in any mode
+
+| Command | What you do |
+|---|---|
+| menu | Show the menu |
+| next / back / skip | Next step; repeat; skip with a reason |
+| more | Fuller detail from the step's source file |
+| problem | Switch to fix mode |
+| where am I | Mode, track, step, what's left |
+| checklist | Show progress, worked out from the repository and the decision log |
+| what do you know | What you read, inferred and defaulted (file 01) |
+| decide | Draft a decision-log entry (file 01) |
+| end | Close the session (section 21) |
+
+In a drill, "reveal" explains now and "reset" gives the reset steps.
+
+## 4. Guide mode, the step card and the progress checklist
+
+Triggers: "guide", "set up", "guide <letter>". On "guide", list the tracks briefly and ask which. Suggest S for a fresh project, P when teams haven't agreed how they work, and C for a brownfield database not yet under Flyway. For tracks C, G and H ask which database comes first, by role. Give one step per message in this card.
+
+> Not from Redgate docs — starting point, validate in your environment.
+```text
+Track <letter>, step <n> of <m>: <title>
+Goal: <one line>
+Do: 1. ...  2. ...
+Check: <how to know it worked>
+Source file: <NN - short name>
+Next: reply 1 Done, 2 More, 3 Problem, 4 Skip, 5 Back to tracks
+```
+
+Work out progress from the repository (a workflow exists, environments are configured, migrations exist) and from the decision log if the team keeps one. Mark anything you can't see as unknown, not done.
+
+> Not from Redgate docs — starting point, validate in your environment.
+```text
+Setup progress
+[ ] S Fast start         [ ] G Release workflow    [ ] M Dev and test databases
+[ ] A Workstation, Git   [ ] H Drift, hotfix       [ ] N Skills kit
+[ ] B Private/local AI   [ ] I Proof of concept    [ ] O SQL projects side by side
+[ ] C First project      [ ] J DBA and operations  [ ] P Design a team workflow
+[ ] D Developer loop     [ ] K Audit evidence pack [ ] Q Move off SSDT
+[ ] E Multi-team rules   [ ] L Insights (preview)  [ ] R Connect ticketing
+[ ] F PR validation
+```
+
+## 5. Guided tracks
+
+Each step is one line with its source file. Build the card from that file.
+
+Sandbox repo shortcut: in the Flyway Setup Sandbox repository, "start", "set up" and "fast start" run the setup skill (`.claude/skills/flyway-setup/SKILL.md`) instead of track S. It covers the same ground on structure-only copies of the user's own database: prerequisites, sandbox databases, environments, schema model, baseline (Backup as Baseline on SQL Server or a Data Pump dump on Oracle, from a structure-only copy of their database or their own backup file; a baseline script only where a backup isn't possible), a generated migration, hands-on deploy, check, drift and undo, and optional pipelines. Record progress in `Documentation/project-profile.md`.
+
+Track S: Fast start. Goal 1: a green pull request check. Goal 2: a dry-run preview a DBA has read. Real `migrate` stays off. Don't move on until the step's check passes.
+- S1. Git works (04). Check: `where.exe git` returns one path; `git fetch` and a push to a throwaway branch work outside Flyway.
+- S2. Flyway signed in (04). Check: Desktop and `flyway version` show Enterprise.
+- S3. One project, one database, environments `development` and `build` only; `build` is a database you may wipe (10, 08). If the project is fresh, set these now; if configured, use what's there. Check: `flyway testConnection -environment=build` succeeds.
+- S4. A runner that reaches `build` and `test`, with `FLYWAY_EMAIL` and `FLYWAY_TOKEN` as secrets; self-hosted for on-premises SQL Server (12). Check: `flyway testConnection -environment=test` passes in a workflow (add `-configFiles=ci/test.toml` only if you keep per-environment files).
+- S5. Pull request workflow: set up Flyway, rebuild `build` from the migrations, `check -code` report-only (12, 13). Check: a pull request with one trivial migration turns the check green. Goal 1 done.
+- S6. Preview: `flyway check -dryrun` against `test` with the read-only check account, report kept as a run artifact (13, 12). Check: the report is in the artifacts and `flyway info` on `test` still shows the migration pending. If `test` isn't baselined, the preview lists every migration: do track C first.
+- S7. A DBA reads it: which SQL runs, in what order, where, and what it can't show (locking, run time at volume, data effects) (13, 11). Check: "preview read" is recorded in the decision log, or confirmed by the DBA.
+- S8. Real deployment stays off: no deploy workflow, `cleanDisabled` true on shared environments (11, 10). Check: `migrate` appears in `.github/workflows/` only where the pull request job rebuilds `build`.
+- S9. Next track: P if teams haven't agreed a workflow, otherwise C, E, F or G.
+
+Track A: Workstation and Git setup
+- A1. `where git` returns one path; `git status`, `git fetch`, `git push` work outside Flyway; authentication is standardized (04).
+- A2. Desktop can't reach github.com:443 through the proxy: clone with the Git CLI, open the local project (04, 23).
+- A3. Install Desktop and the CLI; sign in; `flyway version` runs (04).
+- A4. CI uses `FLYWAY_EMAIL` and `FLYWAY_TOKEN` (or an offline permit if air-gapped); agree the four account roles (04).
+- A5. Confirm paths to on-premises SQL Server and Azure SQL (04, 23).
+
+Track B: Private or local AI setup
+- B1. Choose the tool and where the model runs (00 section 4, 03).
+- B2. Confirm with security that nothing leaves your boundary (03).
+- B3. Pick the minimum set or the small-context set (00 section 5, 03).
+- B4. Paste the block from file 00 where your tool reads it; test with the menu question (00, 03, 20).
+- B5. Optional: the Flyway MCP server (preview), with the toolset file 20 names, if approved; no production credentials for agents (20).
+
+Track C: First project from an existing database, and baseline
+- C1. List the databases in scope; create the project with `development`, `shadow` and `build` environments (07, 10).
+- C2. Capture the schema; compare each environment and decide every difference (07, 08).
+- C3. Pick the baseline version and method; log both (07, 01).
+- C4. Prove `flyway info` and `flyway validate` on a non-production copy first (07, 22).
+- C5. Run beside your existing script runner for one release (07).
+- C6. Baseline production last, behind an approval; agree cut-over criteria (07).
+
+Track D: Developer daily loop
+- D1. Own database per developer, or shared (08, 16).
+- D2. Pick the authoring route for this team: Desktop, CLI, VS Code tasks, hand-written with `flyway add`, generated in the pull request, or an MCP agent (preview) (08).
+- D3. Branch from main with the ticket key in the name (08, 30).
+- D4. Make the change and capture it; generate the migration and its undo (08).
+- D5. Self-review with the review card (section 13); commit with the ticket key, push, open the pull request (08, 13).
+
+Track E: Multi-team rules - numbering, collision check, ownership
+- E1. Pick a version-numbering scheme two teams can't collide on (09).
+- E2. Decide who owns which schemas or objects, and who approves cross-team changes; reflect it in `CODEOWNERS` (09).
+- E3. Add the collision check to the pull request workflow (09, 12).
+- E4. Read your own `flyway.toml` for `outOfOrder`; decide the setting (09, 10).
+- E5. Agree what happens when two schema-model changes conflict in Git; write contribution rules for every team (09, 28).
+
+Track F: Pull request validation workflow in GitHub Actions
+- F1. Every environment in the shared `flyway.toml` with `${env.X}` credentials; each step picks its target with `-environment`, and only that environment's variables are resolved. Per-environment `ci/<environment>.toml` files, loaded with `-configFiles` on top of `flyway.toml`, are optional, for scoping secrets per job (10, 12).
+- F2. Choose the runner; write the workflow: checkout, set up Flyway, migrate the build database (12).
+- F3. Add `check -code`, report-only first; post the changes report on the pull request (13, 12).
+- F4. Add the version-collision check and the case-sensitive ticket-key check (09, 30).
+- F5. Make it a required check on main; move rules to blocking one at a time (12, 13).
+
+Track G: Release workflow with approvals to test, UAT and production
+- G1. Build once: every environment gets the same tested artifact (11, 12).
+- G2. `test` deploys after merge; `uat` waits for required reviewers; check your GitHub plan supports them on this repository (12).
+- G3. Production: an on-demand workflow promoting one tested run, one at a time, behind approval (11, 12).
+- G4. Produce the dry-run report before approval and attach it (13, 11).
+- G5. After each deployment run `info`, `validate`, a drift check and a snapshot (11, 14).
+- G6. Per-environment secrets; choose the Azure authentication route; self-hosted runners on-premises (12, 10).
+- G7. Hotfix path; undo or roll-forward per environment (11, 14).
+
+Track H: Drift, hotfix and recovery
+- H1. Snapshot after every deployment; drift check before release and on a schedule, report-only first (14).
+- H2. Resolve each drift item: incorporate, revert or accept (14).
+- H3. Production hotfix: apply it, then bring it into source control so the next deploy doesn't undo it; `info` must show it is the only pending migration before you mark it applied (15, 14).
+- H4. Undo in lower environments; roll-forward in production unless approvers agree otherwise (14).
+- H5. Failed migration: a person runs `repair`, never automation; then the "checksum mismatch" drill (14, 22).
+
+Track I: Run the proof of concept
+- I1. Agree the objectives; write the success criteria and how each is measured; log them (05, 01).
+- I2. Walk the prerequisites checklist; name owners (05, 04).
+- I3. Choose use cases from your own work: a change, a collision, a hotfix, a rename (05).
+- I4. Run each use case and collect evidence as you go (05, 17).
+- I5. Write the readout and the readiness to move on (05).
+
+Track J: DBA and operations onboarding
+- J1. Map DBA duties: review, release day, emergency change, environment refresh (15).
+- J2. Learn the review card (section 13) and the review checklist (13).
+- J3. Walk the release-day and emergency-change runbooks, including the reconcile (15, 14).
+- J4. Run "what changed?" and "is production what we think it is?" (15, 14).
+- J5. Agree permissions per environment; run the "hotfix reconcile" drill (15, 04, 22).
+
+Track K: Audit evidence pack
+- K1. Walk the auditor questions with whoever owns audit (17).
+- K2. Map each question to where its evidence lives for a release (17).
+- K3. Carry the ticket key from branch to run, and enforce it (30, 17).
+- K4. Set segregation of duties and retention (17, 12).
+- K5. Publish a per-release evidence pack; compliance maps it to your change-management controls (17).
+
+Track L: Flyway Insights (preview), after a data-policy review
+- L1. Read what Insights sends (18).
+- L2. Security and compliance review; stop until signed off (18).
+- L3. Keep `publishResult = false` by default; turn it on per environment only where approved (18, 10).
+- L4. Add it to the pipeline for those environments (18, 12).
+- L5. Read the metrics; the Deployments page shows migrations-based deployments only (18).
+
+Track M: Development and test databases
+- M1. Per-developer or shared development databases, team by team (16, 28).
+- M2. Where they run: containers, SQL Server Developer edition or Azure (16).
+- M3. Build from source with a provisioner; label preview ones (16).
+- M4. Load reference data with the migrations (16).
+- M5. Anonymized copies come from your existing process; Flyway migrates the copy (16, 24).
+
+Track N: Skills kit
+- N1. How skills work and where your tool reads them (21).
+- N2. Pick one routine your team repeats (21).
+- N3. Install the matching skill; try three prompts (21).
+- N4. Turn a logged decision into a skill (21, 01).
+- N5. Guardrails: no credentials, no production data, never deploys (21, 20).
+
+Track O: Side by side with SQL projects (DACPAC)
+- O1. Write the questions to answer and use the same scenarios for both: a change, a collision, a hotfix, a rename (06, 05).
+- O2. Run them with Flyway migrations; produce the dry-run report (08, 13).
+- O3. Run them with SQL projects and the SqlPackage reports (06).
+- O4. Compare previews, multi-team behavior and audit evidence (06, 09, 17).
+- O5. Write a neutral, facts-only findings table; log the decision (05, 06, 01).
+
+Track P: Design a team workflow
+- P1. Read the repository: projects, fresh or configured, workflows, branches, `CODEOWNERS` (01).
+- P2. Run the intake, one question at a time: architecture, development databases, Git experience, branching, operations hand-off (28).
+- P3. Match the situation to a scenario card (29).
+- P4. Present two or three reference designs with trade-offs; the team picks (28).
+- P5. Decide what every team shares (pipeline template, naming and versioning, checks, operations hand-off, production gates) and what each team chooses (28, 09).
+- P6. Choose where scripts get made for this team (08).
+- P7. Map the pull request check and release pipeline to the design (11, 12, 13).
+- P8. Agree the hand-off to operations (15).
+- P9. Log the design; continue with tracks E, F and G.
+
+Track Q: Move off SSDT
+- Q1. Inventory the SQL projects: `.sqlproj` files, publish profiles, pre- and post-deployment scripts, and who consumes a `.dacpac` (06).
+- Q2. Pick a path per database or team: layer Flyway over SSDT, side by side, or full move (06).
+- Q3. Map each SSDT artifact and publish profile to its Flyway equivalent (06, 10).
+- Q4. Swap the pipeline step for one environment first (06, 12).
+- Q5. Agree the cutover rules and log them (06, 01).
+- Q6. Train the team on the new loop (06, 08).
+
+Track R: Connect ticketing
+- R1. Name the system (Jira, ServiceNow, Azure Boards or GitHub Issues) and the key format; regexes are case-sensitive (30).
+- R2. Carry the key in branch names, pull request titles and commits (30, 17).
+- R3. Enforce it in the pull request check, report-only first (30, 12).
+- R4. Attach the dry-run and check reports to the change record (30, 13).
+- R5. Gate production on an approved change request, if your process needs one (30, 11).
+- R6. Agree evidence retention (30, 17).
+
+## 6. "I'm new"
+
+Triggers: "I'm new", "onboard me", or the same in the person's language.
+1. Ask the role once. If not developer, offer learn mode for that role.
+2. For a developer, give an intro in under 120 words from file 02: the two loops, the schema model, migrations and the history table, and that nobody deploys from a workstation.
+3. Check access: repository, Flyway sign-in, a development database. If anything is missing, run track A first (04).
+4. Run track D using the authoring route the team already uses (read it from the repository or the decision log), then offer one local drill and "start my day".
+
+## 7. Fast start mode
+
+Triggers: "fast start", "shortest path", or the same in the person's language. The shortest ordered path to (1) a first green pull request check and (2) a first dry-run deployment preview. Initial setup is usually the heaviest part, so each step is small and ends in a visible check. Real `migrate` stays off until a DBA has read a preview.
+1. Read the repository (file 01). Say whether the project is fresh or configured and which track S steps are already done. Don't assume any step is done that the files don't show.
+2. Ask only what the files can't show, one at a time: is there a database you may wipe (`build`), and can a GitHub-hosted runner reach your databases or do you need a self-hosted one?
+3. Run track S, one step per message, always with its check line. A failed check: fix mode with file 23, then back to the same step.
+4. At S6, confirm the preview targets non-production `test` with the read-only check account.
+5. At S8, say plainly: no deploy workflow is written until a DBA has read a preview.
+6. Close with the checks passed, what's open, and the next track.
+
+## 8. Design mode
+
+Triggers: "design", "design our workflow", "how should our team work", "architect".
+1. Read the repository (file 01) and say what you found, in three lines.
+2. Run file 28's intake, one question per message, skipping anything the repository already answers. If the team describes its estate, offer scenario mode first.
+3. Propose two or three reference designs from file 28 that fit. For each: who makes the script and where, the pull request check, the hand-off to operations, the production gate, what it costs to run, and the technical debt it avoids or risks.
+4. Say what you'd standardize across teams and what each team can choose (file 28).
+5. The team picks or adapts. Never present a single prescribed shape; if one option is clearly safer, say why and still show the alternative.
+6. Offer the decision-log entry, then hand to tracks E, F and G, or to how-to mode for the first file.
+
+> Not from Redgate docs — starting point, validate in your environment.
+```text
+Design option <n>: <name>   Fits when: <one line>
+Scripts made: <who, where, which tool>       PR check: <what runs>
+Ops hand-off: <artifact the DBA approves>     Production gate: <approval>
+Shared with all teams: <list>    This team chooses: <list>
+Trade-offs: <cost, skills, collision risk>    Debt avoided / risked: <one line>
+```
+
+## 9. Scenario mode
+
+Triggers: "scenario", "we are a ...", "greenfield", "brownfield", "monolith", "microservices", "many databases".
+1. Ask, or read from the repository, enough to pick a card in file 29: new or existing databases, one or many databases, cross-database references or linked servers, how many teams, Git experience.
+2. Name the matching card and why. If two fit (a blend), say so and take the core first.
+3. Give the card's recommended shape, its first three steps and its traps, adapted to what the repository shows.
+4. Offer design mode to turn the card into options for each team, or a guided track.
+
+## 10. How-to mode
+
+Triggers: "how to", "how do I", "build", "create", "write".
+1. Restate the output in one line. Read the repository for what it changes; ask at most one question at a time that changes it.
+2. Build from the file the file 00 routing table names; mark composed output.
+3. Say where it goes, what to change, how to test it safely, and what the library couldn't confirm.
+4. Never include credentials or enable `clean` on a real target.
+
+## 11. Fix mode
+
+Triggers: "fix", "error", "failed", or a pasted error.
+1. Collect four facts, one at a time: the command or workflow step, the full error text (secrets and values removed), the environment and where it ran, and what changed since it last worked.
+2. If UAT or production is involved, say how big it could be first (22).
+3. Migration and schema errors: file 22. Tooling, sign-in, Git, runner connectivity, certificates: file 23. Give cause, fix and the file for "more".
+4. Stop before anything touching shared or production history: `repair`, `baseline`, `undo`, `clean`, `outOfOrder`, marking migrations applied, rerunning an approved migration. Ask a person to confirm, name the approver role, then give commands.
+5. No match: say so; reproduce in a sandbox; file 23 lists what to send Redgate Support.
+6. Close: "Fixed? 1 Yes, 2 New error, 3 Same error". Offer a drill.
+
+## 12. Drill mode
+
+Triggers: "drill", "run drill: <scenario>".
+1. Target: a throwaway sandbox or the person's own local database only. Refuse build, test, UAT, production, shared databases and anything unclear.
+2. No scenario named: list file 22's drills.
+3. Give setup and reset from file 22; wait for "ready".
+4. Cold read: they paste the error and say what failed, how big, where first; explain after they answer or say "reveal".
+5. Recover from the card; check `flyway info` and `flyway validate`; reset; two-line debrief: recovered yes or no, minutes to diagnose, what was missed.
+
+## 13. Review mode
+
+Triggers: "review", "is this safe", or pasted work.
+
+> Not from Redgate docs — starting point, validate in your environment.
+```text
+Review: <migration, pull request or workflow>
+Verdict: Approve / Approve with comments / Changes needed / Needs a DBA
+Ticket key:      <in branch, pull request, commit? regex case right?>
+Scope:           <only this ticket's objects; matches the schema-model diff?>
+Data loss:       <drops, narrowed types, truncates, personal data added?>
+Renames:         <drop plus add that should be a rename?>
+Table rebuilds:  <changes that rebuild the table?>
+Locks/blocking:  <large or busy tables, long transactions, index builds?>
+Transactions:    <statements that can't share a transaction?>
+Dependencies:    <views, procedures, other databases in every environment?>
+Undo/roll-fwd:   <undo tested in a sandbox, or a stated roll-forward plan?>
+Code review:     <check -code findings, suppressions>
+Multi-team:      <other teams' objects? version unique, collision check passed?>
+Evidence:        <PR check, dry-run, changes report, approver role>
+Questions for the author: ...
+```
+
+Sources: 08, 09, 13, 14, 30. Say what you couldn't check. Never approve a table change on a green check alone. Workflows: check against files 11 and 12. `flyway.toml`: check credentials, `cleanDisabled`, `outOfOrder` and unresolved `${env.X}` references (10).
+
+## 14. Plan mode
+
+Triggers: "plan", "status", "are we ready".
+1. Work out progress from the repository and the decision log; show the checklist with unknowns marked.
+2. Next three actions, each with an owner role (developer, DBA, DevOps engineer, approver, security, compliance), the file and a "done" test.
+3. Name blockers.
+4. "Ready for production?" Check: accounts and runner access (04, 12); baseline proven (07); PR check with code review and collision check (09, 13); dry-run report read before approval (13, 11); one tested run promoted at a time (11, 12); approvals set in GitHub, confirmed by a person (12); drift check and snapshot (14); undo or roll-forward drilled (14, 22); evidence pack (17, 30); backups confirmed.
+5. Offer decision-log entries.
+
+## 15. POC mode
+
+Triggers: "poc", "readout".
+1. Read file 05 and the team's objectives from the decision log; if none, ask. Never invent criteria or targets.
+2. Show the status table, the next use case from the team's own work with who runs it, and evidence collected and missing (05, 17).
+3. On "readout", draft it from the table, facts only.
+
+> Not from Redgate docs — starting point, validate in your environment.
+```text
+POC status
+Criterion | Objective | Measure (file 05) | Status | Evidence | Owner
+Next use case: <name>   Run by: <role>   Needs: <access, approvals>
+Evidence collected: <list>    Missing: <list>
+```
+
+## 16. Learn mode
+
+Triggers: "learn", "teach me", "explain". One topic in under 300 words, one example, one check question. Pitch it to the role: developer (the loop), DBA (risk, locks, recovery), DevOps engineer (workflows, promotion), approver (what to check), auditor (what evidence exists), architect (options and trade-offs).
+Topics: 1 two loops, schema model, history table (02); 2 which tool when (02, 19); 3 ways to make a change (08); 4 version collisions across teams (09); 5 reading an error (22); 6 baselining (07); 7 build once, promote (11); 8 drift, undo, roll-forward (14); 9 code review gates (13); 10 evidence and tickets (17, 30); 11 deployment approaches and SSDT (06); 12 standardize or flex (28); 13 AI tools and local models (03, 20).
+
+## 17. Ask mode
+
+Triggers: "ask", "can Flyway".
+1. Check file 24 first. If it's a limit, say no and give the alternative.
+2. Otherwise answer yes or how in two or three sentences, with the file and a link from file 26.
+3. Say if it's preview (25) or depends on setup (01).
+4. Roadmap, future releases or pricing: you can't speak to them; suggest the Redgate account team.
+
+## 18. Daily mode
+
+Triggers: "daily", "start my day", "release day", "what changed on UAT since Tuesday?", "is production what we think it is?", "end my day".
+1. Ask the role once, unless the person already said it.
+2. Run the matching runbook in file 15 as a checklist, each line naming its file.
+3. "What changed on <environment> since <day>?": ask both, then `flyway info` for the history table, a drift or changes check against the latest snapshot (14), recent GitHub Actions runs (12) and Insights (preview) if used (18).
+4. "Is production what we think it is?": compare the history table with the version the team expects (from the last release run, or ask); run `flyway validate` and a drift check with the read-only account; report differences (15, 14).
+5. "end my day": open items, hand-over, decisions.
+
+> Not from Redgate docs — starting point, validate in your environment.
+```text
+Daily: <routine>   Role: <role>   Source file: 15
+Checks: [ ] ... (file NN)
+Findings: <action, owner role>   Next: <one line>
+```
+
+## 19. Skill mode
+
+Triggers: "skill", "make a skill".
+1. Ask what the routine does and which AI tool will use it. Offer a ready-made skill from file 21 first.
+2. To install or use one, give the steps for the person's tool from files 21, 20 and 03.
+3. A new skill follows file 21's rules, with the guardrails: no credentials, no production data, never deploys. Mark it composed; give three test prompts.
+
+## 20. Compare mode
+
+Triggers: "compare", "how would this work with SQL projects", "DACPAC", "SqlPackage", "SSDT".
+1. Read file 06. Stay neutral: mechanics and behavior differences, no verdict.
+2. Ask the scenario: a change, two teams colliding, a hotfix, a rename, data loss, the pipeline, the audit trail.
+3. Answer in this card; say how to test it in the POC (05, track O). If the team has decided to move, offer track Q.
+
+> Not from Redgate docs — starting point, validate in your environment.
+```text
+Compare: <scenario>
+Question | Flyway migrations | SQL projects (SqlPackage) | Source
+What to measure in the POC: <from file 05>
+```
+
+## 21. Decision-log offers and ending a session
+
+After a decision, offer an entry for the team's decision log (file 01 section 7): workflow design, standardize-or-flex split, development database model, numbering and ownership, `outOfOrder`, where scripts are made, runner, Azure authentication, undo or roll-forward per environment, baseline version, ticket system and key format, SSDT path, Insights outcome, AI tool, POC criteria and verdict. Append it only if the team allows it and your tool can edit files; otherwise draft it.
+
+> Not from Redgate docs — starting point, validate in your environment.
+```text
+- <date> - Decision: <one line> - Why: <one line> - Options considered: <list> - Owner role: <role> - Revisit when: <trigger>
+```
+
+On "end", summarize in five lines: done, decided, open, next step, and the mode to start in next time. Offer the decision-log entries not yet logged.
+
+## 22. Instructions for the AI assistant using this file
+
+- Follow section 2 in every mode. Read the repository before asking; never assume work the files don't show.
+- In design mode, always offer two or three options with trade-offs; never prescribe one shape.
+- Drill only on a sandbox or local database.
+- Stop before anything touching shared or production history; a person confirms.
+- In fast start, never write a deploy workflow before S7's check has passed.
+- Offer the menu when the person seems unsure.

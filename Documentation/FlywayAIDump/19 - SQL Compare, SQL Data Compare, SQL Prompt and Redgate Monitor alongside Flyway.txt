@@ -1,0 +1,253 @@
+Flyway Enterprise AI library - file 19 of 32
+SQL Compare, SQL Data Compare, SQL Prompt and Redgate Monitor alongside Flyway
+Flyway reference library, October 2026. Generic guidance written for your AI assistant. It contains no data from your environment, and you shouldn't add any to these files.
+
+What this covers: Which Redgate tool to reach for when, for a team that may already own SQL Compare, SQL Data Compare, SQL Prompt or Redgate Monitor and now adds Flyway. The rule is "investigate and author with the compare tools; deploy through Flyway". It covers SQL Compare jobs and its command line, exit codes, SQL Data Compare for reference data only, SQL Prompt styles, snippets and code analysis, how SQL Prompt's AI features handle data, and Redgate Monitor deployment annotations.
+
+Not in this file: Flyway's authoring loop (file 08), baselining (file 07), Flyway drift and snapshots (file 14), code review (file 13), Insights (file 18), the MCP server and AI guardrails (file 20), versions (file 25), links (file 26).
+
+Contents:
+1. The rule, and which tool when
+2. One engine, two front ends
+3. SQL Compare: the jobs it does well
+4. SQL Compare on the command line
+5. Exit codes, including 63
+6. SQL Data Compare: reference data only
+7. SQL Prompt: styles, snippets and code analysis
+8. SQL Prompt AI and your AI policy
+9. Redgate Monitor: deployment annotations
+10. In daily use
+11. Limits
+12. Instructions for the AI assistant using this file
+
+## 1. The rule, and which tool when
+
+For any database Flyway manages, changes go in through Flyway migrations. Use SQL Compare and SQL Data Compare to investigate and to author a script, not to push changes into a managed environment.
+
+Why:
+- A SQL Compare or SQL Data Compare deployment doesn't write to Flyway's schema history table, so Flyway doesn't know it happened.
+- The next `check -drift` reports it as drift, and the next generated migration may repeat or undo it.
+- The change skips code review, approval and the audit trail (file 17).
+
+| You want to | Use | Then |
+|---|---|---|
+| Capture a developer's change | Flyway Desktop, or `flyway diff`, `model`, `generate` (file 08) | Pull request |
+| Hand-cut or reshape a migration | SQL Compare to produce the script | Commit as the next versioned migration |
+| Prove an environment matches a release | `flyway check -drift` (file 14), or SQL Compare `/assertidentical` | Report |
+| Compare reference table rows | SQL Data Compare, or Flyway static data | Script, then a migration |
+| See what a release did to the server | Redgate Monitor annotations | Investigate |
+| Deploy to `test`, `uat` or `production` | Flyway only | Files 11 and 12 |
+
+## 2. One engine, two front ends
+
+Redgate's Redgate Compare SQL Server namespace page says SQL Compare options are available in Flyway because "Flyway uses the same engine under the hood". In practice:
+
+- **The engine is shared.** If a Flyway diff looks odd, reproduce it in SQL Compare with the same options and filter.
+- **Option names match.** Flyway's keys under `redgateCompare.sqlserver.options.behavior` and `redgateCompare.sqlserver.options.ignores` are SQL Compare options.
+- **The filter file is shared.** A SQL Server Flyway project reads a `.scpf` filter (the `filterFile` setting), which SQL Compare can open.
+
+What isn't shared:
+- **Defaults.** Flyway's option defaults can differ from SQL Compare's. Set the same options on both sides before you compare results.
+- **Fixed options.** The same page lists 15 SQL Compare options hard-coded in Flyway. Four matter when you hand-author a script: `NoTransactions`, `NoErrorHandling`, `DoNotOutputCommentHeader` and `NoDeploymentLogging` are all true. Set the same four in SQL Compare, because Flyway owns transactions at run time. Another fixed option is `AddDatabaseUseStatement=false`, so a Flyway script never switches database with `USE`; turn it off in SQL Compare too before you compare output.
+- **Removed options.** `IgnoreSynonymDependencies` was removed from Flyway's options (from engine 12.1.0), so a SQL Compare project that relies on it won't match Flyway's output.
+- **Snapshots.** SQL Compare `.snp` files and Flyway snapshots are separate formats.
+- **Object coverage.** Flyway's docs don't publish a per-object-type support list for SQL Server; coverage follows the SQL Compare engine, so use the SQL Compare documentation for that list. That it's identical in every case is unverified, so prove unusual object types on a development database.
+- **Desktop features.** Flyway Desktop has no object locking and no SSMS integration. Redgate has said it has no plans for locking without demand. Coordinate who edits which object through Git and code owners (file 09).
+
+"Same engine" doesn't mean the generated SQL matches what SQL Compare would write for you: the defaults and fixed options above differ, so compare like with like.
+
+## 3. SQL Compare: the jobs it does well
+
+| Job | How | Then |
+|---|---|---|
+| Align environments before baselining | Compare each environment with the chosen baseline source | Baseline in Flyway (file 07) |
+| Investigate drift | Compare the environment with a snapshot or a database built from the last release | Capture the change through Flyway (file 14) |
+| Compare on-premises with an Azure copy | Source and target can each be a database, snapshot, scripts folder or backup | Read-only report. Fix differences by migration |
+| Hotfix reconciliation report | Compare production with the last release snapshot | Capture the fix as a migration so the next deployment doesn't undo it (file 15) |
+| Author a tricky script | Compare the changed development database with one built from the current release, select only the objects you need, save the script | Commit as a versioned migration, run `check -code`, open a pull request |
+| Pre-release report for a change board | Compare the release build with a production snapshot, save an HTML report | Attach beside `check -changes` (file 13) |
+
+Always exclude Flyway's schema history table. Read the deployment warnings (table rebuilds, possible data loss) before any script goes near Flyway.
+
+## 4. SQL Compare on the command line
+
+The command is `sqlcompare`. From Redgate's "Switches used in the command line" page for SQL Compare 16: the first data source (`/db1`, `/b1` and so on) is the source, and the second (`/db2`) is the target.
+
+| Job | Switches |
+|---|---|
+| Server and database | `/server1:<server> /database1:<db-name>` (aliases `/s1`, `/db1`), and `/server2`, `/database2` |
+| Scripts folder, snapshot or backup | `/scripts1`, `/snapshot1`, `/backup1`, and the `2` forms |
+| Azure Active Directory (Microsoft Entra) authentication | `/activedirectory1` (alias `/ad1`), `/activedirectory2` |
+| Integrated security | Leave out `/username1`; prefer integrated or Entra authentication to literal passwords |
+| Write a script without deploying | `/scriptfile:<file>.sql` |
+| Report | `/report:<file>` with `/reporttype:Html` (or XML, Classic, Excel) |
+| Save console output | `/out:<file>` |
+| Take a snapshot | `/makesnapshot:<file>.snp` |
+| Include or exclude | `/include:<type>:<regex>`, `/exclude:<type>:<regex>`, or `/filter:<file>.scpf` (not with `/include` or `/exclude`) |
+| Prove identical | `/assertidentical` |
+| Overwrite output files | `/force` |
+| Deploy (changes the target) | `/synchronize`. Never against a Flyway-managed database |
+
+If an object matches both `/include` and `/exclude`, "the /exclude rule takes priority". Neither works with `/project`, and a saved project selects all objects.
+
+A reconciliation check of production against the snapshot taken at the last release:
+
+> Not from Redgate docs — starting point, validate in your environment.
+```powershell
+& "<path-to>\SQLCompare.exe" `
+  /snapshot1:"<snapshot-folder>\<db-name>-release.snp" `
+  /server2:"<server>" /database2:"<db-name>" `
+  /exclude:table:flyway_schema_history `
+  /assertidentical `
+  /report:"<report-folder>\<db-name>-reconcile.html" /reporttype:Html `
+  /out:"<report-folder>\<db-name>-reconcile.log" /force
+switch ($LASTEXITCODE) {
+  0       { "Identical to the release snapshot" }
+  79      { "Differences found - read the report, then reconcile through Flyway" }
+  default { "Run failed with exit code $LASTEXITCODE"; exit 1 }
+}
+```
+
+## 5. Exit codes, including 63
+
+From Redgate's SQL Compare 16 exit codes page:
+
+| Code | Meaning |
+|---|---|
+| 0 | Success. With `/assertidentical`, the objects compared are identical |
+| 35 | Invalid license |
+| 61 | Deployment warnings (with `/AbortOnWarnings`), or unsafe-looking static data WHERE clauses |
+| 62 | High level parser error in a scripts folder |
+| 63 | Databases identical, or no objects included |
+| 74 | I/O error, for example the output file exists and `/force` isn't set |
+| 79 | Not identical (only with `/assertidentical`) |
+| 126 | SQL Server error |
+| 402 | Not licensed |
+
+Exit code 63 means "the databases being compared are identical or no objects have been included". Without `/assertidentical`, a clean run returns 63, not 0, and a filter or `/include` typo that matches nothing returns the same 63. A mistake can look like "no differences". `/include:Identical` suppresses 63. For a check, use `/assertidentical` (0 identical, 79 different) and confirm the report lists objects.
+
+## 6. SQL Data Compare: reference data only
+
+SQL Data Compare reads rows. Everything it produces contains real values: the results grid, the sync script, `/export` output (a `Summary.csv`) and the saved project. Use it for reference and configuration data only.
+
+1. Never use it to move bulk data, especially production data, into another environment. It doesn't mask or anonymize anything.
+2. Name the tables with `/include:table:<regex>`, or use a reviewed project. Never compare all tables.
+3. Produce a script (`/scriptfile`), turn it into a versioned migration and review it. Don't run `/synchronize` against a Flyway-managed database.
+4. Treat outputs as data. Keep them in a controlled location, delete working copies, and don't paste them into an AI assistant, ticket or chat. Describe the shape instead: table name, number of differing rows, columns involved.
+5. Run it only where policy allows the tool to read that data.
+
+How it relates to Flyway static data (files 08 and 16):
+- Reference table with a primary key: Flyway static data.
+- No primary key, or a different row filter per side: a SQL Data Compare project. On the command line, `/ComparisonKeys` accepts only a unique index, and the switches page has no WHERE switch, so other keys and row filters live in a project. Commit the result as a migration.
+- Reference-data drift: Flyway's drift check covers schema objects, so run a report-only SQL Data Compare of the named tables. Exit code 63 is ambiguous here too, and SQL Data Compare has no `/assertidentical`.
+
+## 7. SQL Prompt: styles, snippets and code analysis
+
+SQL Prompt is an add-in for SSMS and Visual Studio that helps authors write the T-SQL in a migration, test or data fix. Flyway decides what gets deployed.
+
+**Shared formatting style.** Keep one team style in the repository next to your migrations, and point each person's SQL Prompt style folder at the local clone (Redgate's "Sharing formatting styles" page describes a shared folder). Style changes then go through pull request review.
+
+**Shared snippets.** Share snippets the same way, or through Redgate Platform. A migration-header snippet keeps the ticket key in one place. The ticket key must also be in the filename, because Flyway takes the description from the filename.
+
+> Not from Redgate docs — starting point, validate in your environment.
+```sql
+-- Ticket: $ticketkey$
+-- Purpose: $purpose$
+-- Created: $DATE(yyyy-MM-dd)$
+-- Filename: V<version>__<ticket-key>_<short_description>.sql
+$CURSOR$
+```
+
+**Code analysis.** SQL Prompt flags rule violations while you type. It's advice in the editor. Flyway's `check -code` is the gate: it runs in the pull request, takes custom rules and can fail the build (file 13). Where they disagree, the Flyway rule wins.
+
+**Formatting from the command line.** Redgate lists the command-line formatter under bulk operations, a licensed feature. Format only migrations you are adding: reformatting an applied migration changes its checksum and fails `validate` (file 22).
+
+## 8. SQL Prompt AI and your AI policy
+
+Your security policy blocks public generative AI. Read this before anyone switches on SQL Prompt's AI features: Prompt AI (explain, fix and optimize), Query Index Analysis, AI code completion (preview) and Redgate Assistant (preview).
+
+What Redgate's "SQL Prompt AI data handling" page says (read on 19 October 2026):
+- What is sent. "Redgate may transmit your prompt, the contents of your query window, SQL execution and SSMS/VS CodeSense errors, SQL execution plans and relevant database schema information to its dedicated AI services." If the "Generate initial suggestions using SQL History" option is on, recent queries stored in SQL History are sent too.
+- What isn't. "AI features do not access or transmit any actual data stored in your connected databases." Anything you type or paste into the query window is sent, though, and that includes literal values.
+- How it is processed. Requests are processed transiently, not stored or used to train models. Redgate Assistant (preview) keeps conversation inputs, outputs and history for up to 60 days.
+- Where it goes. Redgate's enabling page says all SQL Prompt AI requests go to `*.redgate-platform.com`, and Redgate Assistant also uses `*.ai.redgate.cloud`.
+- Switching it on or off. Every AI feature is opt-in: nothing is sent until a user takes action. An organization admin can turn AI off for the whole organization in the Redgate Portal, under "Redgate Environment AI and Data Sharing Features". The FAQ says that setting covers Redgate Assistant, SQL Prompt, Monitor and Flyway.
+
+In plain terms: this is a Redgate-run, hosted AI service. It isn't a model inside your tenant, and it isn't one of the approved or self-hosted options in file 03. Check with your security team before anyone enables it. Give them the data handling page, the Redgate Trust Center and the subprocessor list (file 26). Until they answer, keep it off, ask the portal admin to set the organization-wide switch, and record the decision in your decision log (file 01). Formatting, snippets and code analysis work without AI.
+
+## 9. Redgate Monitor: deployment annotations
+
+Redgate Monitor's activity graph shows CPU, memory, I/O and waits over time. Redgate's Flyway page "Integrate with Redgate Monitor" documents two ways to mark a deployment on that graph. Only these two are covered here.
+
+**Method 1: error-log annotation (SQL Server).** Add `afterMigrateApplied.sql` to your migrations folder with this code, copied from that page. It writes an event to the SQL Server error log, and Monitor shows it on the graph.
+
+```sql
+-- ---------------------------------------------------------------------
+-- Annotate this release on Redgate Monitor
+-- ---------------------------------------------------------------------
+IF HAS_PERMS_BY_NAME(N'sys.xp_logevent', N'OBJECT', N'EXECUTE') = 1
+BEGIN
+    DECLARE @databaseName AS nvarchar(2048), @eventMessage AS nvarchar(2048)
+    SET @databaseName = REPLACE(REPLACE(DB_NAME(), N'\', N'\\'), N'"', N'\"')
+    SET @eventMessage = N'Redgate Flyway: { "deployment": { "description": "Flyway deployed to ' + @databaseName + N'", "database": "' + @databaseName + N'" }}'
+    EXECUTE sys.xp_logevent 55000, @eventMessage
+END
+GO
+```
+
+- The script checks permission first. If the deploy account lacks EXECUTE on `sys.xp_logevent`, nothing is written, nothing fails, and no marker appears. Decide that grant with your DBA.
+- It fires on migrations applied by `migrate`. Check the callback events page if you use state-based deployment.
+- Whether Redgate Monitor SaaS picks up error-log annotations isn't documented on the pages checked. Test it.
+
+**Method 2: the Monitor PowerShell API.** The same page says the Monitor API "does not write to the error log". `Add-RedgateMonitorAnnotation` takes `-Target` (a SQL Server or PostgreSQL instance from `Get-RedgateMonitorInstance`), `-Description`, `-UtcDate` (the page suggests `[datetime]::UtcNow`), `-Url` (where a click on the annotation goes) and `-Source`, where "Flyway" is one of the values that sets the icon. `-DatabaseName` is "Unused for now", so the marker sits on the instance. You need an access token and the PowerShell module from your Monitor installation. The PowerShell API page is marked "Unavailable in SaaS".
+
+> Not from Redgate docs — starting point, validate in your environment.
+```powershell
+# After 'flyway migrate' succeeds. Get $instance as the Monitor PowerShell API docs describe.
+Add-RedgateMonitorAnnotation -Target $instance `
+  -Description "Flyway deployment <ticket-key>" `
+  -UtcDate ([datetime]::UtcNow) `
+  -Url "<link-to-the-pipeline-run>" `
+  -Source "Flyway"
+```
+
+Choose Method 1 for a quick SQL Server marker with no token. Choose Method 2 for a link back to the pipeline run.
+
+From engine 13.8.0, Flyway connections report the application name `Redgate_Flyway` (previously "Flyway by Redgate"). Update any Monitor filter or exclusion keyed on the old name. Flyway doesn't read from Monitor.
+
+## 10. In daily use
+
+- Before building a pipeline step on a compare tool's command line, or relying on a SQL Prompt feature, check with your account team that your licenses cover it. Redgate's Flyway static data pages say Flyway Enterprise comes with SQL Data Compare, with a command line and Docker images.
+- Developer: writes migrations with the shared style and snippets; looks at a difference in SQL Compare before capturing it in Flyway Desktop.
+- DBA, after an emergency change: runs the reconciliation report, then reconciles through Flyway (file 15).
+- DBA, before baselining: compares environments to decide what the baseline is (file 07).
+- Release owner: attaches a SQL Compare report beside Flyway's changes report.
+- Data owner: runs a report-only SQL Data Compare of named reference tables, then deletes the export.
+- Whoever watches Monitor: looks for the Flyway annotation when performance moves after a deployment.
+
+## 11. Limits
+
+- SQL Compare and SQL Data Compare cover SQL Server, including Azure SQL.
+- A compare-tool deployment leaves no record in Flyway's history.
+- Flyway and SQL Compare share an engine but not defaults or fixed options, so their scripts can differ. Flyway publishes no per-object-type support list for SQL Server.
+- Flyway Desktop has no object locking and no SSMS integration.
+- Exit code 63 means identical or nothing included. Use `/assertidentical` in SQL Compare.
+- SQL Data Compare doesn't mask data, and its command line has no WHERE switch.
+- SQL Prompt's code analysis is advice in the editor, not a pipeline gate.
+- SQL Prompt AI sends query-window content to a Redgate-hosted service. Whether you may use it is your security team's decision.
+- Monitor's PowerShell API isn't available in Monitor SaaS, and SaaS pickup of error-log annotations isn't documented.
+- Flyway doesn't read from Monitor and has no built-in health gate before a deployment.
+
+## 12. Instructions for the AI assistant using this file
+
+- Ask first whether the target is Flyway-managed. If it is, never suggest `/synchronize`. Suggest a script, then a Flyway migration.
+- Never say Flyway's generated SQL will match SQL Compare's because they share an engine. Name the differences in section 2.
+- Use only the switches and exit codes in this file. For anything else, point to `sqlcompare /help` or the switches page in file 26.
+- Any compare check you write uses `/assertidentical`, or treats exit code 63 as "verify something was included".
+- Mark every command you compose with the "Not from Redgate docs" line. Use integrated or Entra authentication, never literal passwords.
+- Before suggesting SQL Data Compare, ask which tables are involved. Never ask for, display or accept row values, results, exports or scripts from real databases.
+- Never present SQL Prompt AI as approved. Say plainly what it sends (section 8), tell the person to check with their security team first, and label Redgate Assistant and AI code completion as preview.
+- For pipeline licensing, say to check with the account team. Don't discuss seats or pricing.
+- Cover only the two Monitor annotation methods in this file.
+- Don't state versions. Use file 25.
+- Answer in the language the person writes in. Keep commands, keys, file names and error text in English.

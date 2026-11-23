@@ -1,0 +1,380 @@
+Flyway Enterprise AI library - file 16 of 32
+DEVELOPMENT AND TEST DATABASES - PROVISIONING FROM SOURCE, REFERENCE DATA AND ANONYMIZED COPIES
+Flyway reference library, October 2026. Generic guidance written for your AI assistant. It contains no data from your environment, and you shouldn't add any to these files.
+
+What this covers: How to give developers and test pipelines databases they can change safely: shared versus dedicated development databases and how to choose, per-developer development and shadow databases on the same server, options for on-premises SQL Server, Azure SQL Database and Azure SQL Managed Instance, shadow and build databases, the provisioners Flyway offers, building a database from source, reference (static) data, keeping environments in step, where anonymized copies fit and where they don't, synthetic data, and a refresh runbook. It's written for SQL Server on-premises and Azure SQL.
+
+Not in this file: The authoring routes and daily loop for each development database model (file 08, developer workflows), team-level design (file 28, workflow architect), situation cards such as many databases or microservices (file 29, scenario playbooks), the pipeline that builds and tests (files 11 and 13), baselining production (file 07), drift response (file 14), and audit evidence (file 17).
+
+Contents:
+1. The environments and who uses them
+2. Development databases: dedicated or shared, and how to choose
+3. Shadow and build databases, on-premises, Azure SQL Database and Managed Instance
+4. Provisioners
+5. Building a database from source
+6. Reference and static data
+7. Keeping development and test in step
+8. Anonymized copies and production data
+9. Synthetic data
+10. Environment refresh runbook
+11. Limits
+12. Instructions for the AI assistant using this file
+
+## 1. The environments and who uses them
+
+| Environment | Purpose | Who or what changes it |
+|---|---|---|
+| development | Where a person edits the schema | One developer (per-developer) or a team (shared) |
+| shadow | Scratch database Flyway Desktop uses to build and compare migrations | Flyway only |
+| build | Disposable database a pipeline builds from migrations to check them | The pipeline only |
+| test | Shared database that runs automated and manual tests | The pipeline's deploy account |
+| uat and production | Pre-release and live | Governed releases (file 11) |
+
+Accounts follow the same split: admin creates databases, deploy owns migrations, a read-only check account runs `info`, `validate` and drift checks, and developers get rights on their own development database only.
+
+Production data never goes onto a developer workstation or into an AI prompt (section 8).
+
+## 2. Development databases: dedicated or shared, and how to choose
+
+Flyway Desktop works with either a shared development database (one database many people change) or dedicated ones (each person has their own). Redgate's development database configuration page says a shared database "could increase human error, limit the ability of team members to experiment, and curtail testing of features early in the development process" (https://documentation.red-gate.com/fd/development-database-environment-configuration-138346960.html). It gives four reasons to prefer dedicated databases:
+
+- Git is distributed but a shared database isn't. Nobody can tell which changes in it are committed, or on which branch, so people overwrite each other or commit someone else's work in progress. A dedicated database matches your own clone.
+- A private database is a safe place to experiment without breaking anyone else's work.
+- People with a private database share changes by committing them. On a shared database, uncommitted changes build up, get lost or overwritten, and vanish if the database is dropped.
+- Developers can be given higher permissions on their own database, which builds skill and makes troubleshooting easier.
+
+| | Dedicated (per developer, optionally per branch) | Shared |
+|---|---|---|
+| Redgate position | Recommended | Supported, with extra discipline |
+| Connection lives in | `flyway.user.toml` (Desktop's default, "Save to user settings") | `flyway.toml` (project settings), credentials still per user |
+| Capture | Everything you changed | Only your objects, selected one by one |
+| After a pull | Update your database from the schema model, `migrate`, or rebuild from source | Pull and resolve only; never apply the model to it |
+| Conflicts | Appear in Git, in the pull request | Appear as overwritten objects in the database |
+| Fails when | People skip "save before pull" and drift from Git | Two people change the same object; work in progress gets committed by someone else |
+| Cost | Local resources or per-developer cloud databases | One database |
+| Shadow | One per developer | Still one per developer |
+
+Redgate's team-based development articles describe the same split. In the setup article, each developer clones the repository and links their own development and shadow databases, then keeps them current from the schema model or by running `migrate` (https://www.red-gate.com/hub/product-learning/flyway/setting-up-for-team-based-database-development-using-flyway-desktop/, uses older project file names). The team-based article says a shared development server is safe only if developers don't work on the same objects at the same time, and that who-did-what is hard to audit there (https://www.red-gate.com/hub/product-learning/flyway/moving-to-team-based-database-development-with-flyway/, uses older edition names).
+
+How to choose:
+
+1. Default to dedicated databases, one per developer, plus one shadow each.
+2. Choose shared only when the database is too large or too tangled to build from source (invalid objects, cross-database references), the team is very small, or the infrastructure for personal databases doesn't exist yet. Then follow the shared rules in file 08 (route 2): filter file in place, capture only your objects, one ticket per pull request.
+3. Teams can differ: one team on dedicated databases and another on a shared one can work in the same project, because both commit the same files. Record each team's model in your decision log (file 01).
+4. Moving from shared to dedicated: capture the shared database into the schema model, build personal databases from source (section 5), move the connection into `flyway.user.toml`, and keep the old database as an integration environment only the pipeline deploys to.
+
+### Where a dedicated database can live
+
+| Option | Fits | Watch for |
+|---|---|---|
+| SQL Server Developer edition on the developer's machine | Closest match to on-premises servers | Microsoft licenses it for development and test only |
+| SQL Server Linux container (`mcr.microsoft.com/mssql/server:<tag>`) | Easy to throw away; runs Developer edition by default | Accept the EULA and set `MSSQL_SA_PASSWORD` (`SA_PASSWORD` is deprecated) |
+| A personal database on a shared development instance | No local install; same server as your shadow and any referenced databases | Each person needs create rights or a database made for them |
+| Azure SQL Database, one per developer (serverless or in an elastic pool) | Teams whose production is Azure SQL Database | Costs while it exists; a paused serverless database answers the first connection with error 40613, so retry; no three-part cross-database names |
+| Databases on a development Azure SQL Managed Instance | Teams whose production is Managed Instance, or that need cross-database references | Instance cost is shared; restores come only from Azure Blob Storage |
+
+> Not from Redgate docs — starting point, validate in your environment.
+
+```bash
+docker run -e "ACCEPT_EULA=Y" -e "MSSQL_SA_PASSWORD=<local-dev-password>" -p 1433:1433 -d mcr.microsoft.com/mssql/server:<tag>
+```
+
+Use a throwaway password, never one that exists anywhere else. A dedicated database can be rebuilt from source whenever it breaks (section 5), which is the main reason to prefer it.
+
+### Azure SQL Database or Managed Instance for development
+
+Microsoft's feature comparison shows the differences that matter here (https://learn.microsoft.com/en-us/azure/azure-sql/database/features-comparison):
+
+| | Azure SQL Database | Azure SQL Managed Instance |
+|---|---|---|
+| Cross-database three-part names | No (elastic query instead) | Yes, within the instance |
+| Linked servers | No | Yes, to SQL Server and SQL Database |
+| `RESTORE` statements | No | Yes, `FROM URL` from Azure Blob Storage only |
+| Per-developer databases | One database each, serverless or pooled | Many databases on one development instance |
+| Shadow placement | Its own database, or a local shadow | Same instance as the development database |
+
+If the code uses three-part names across databases, Azure SQL Database can't host it as written; plan Managed Instance or on-premises instances for those projects (file 29, scenario playbooks).
+
+## 3. Shadow and build databases, on-premises, Azure SQL Database and Managed Instance
+
+Flyway Desktop uses a shadow database to build the state of your migrations so it can compare them with the schema model and generate the next migration. A build database does the same job in a pipeline, so checks run against a clean database built only from the repository (file 13).
+
+Redgate's shadow and build environments page recommends:
+
+- One shadow database per developer per project, on the same server as that developer's development database (cross-database dependencies must resolve there too).
+- For SQL Server, hosting on LocalDB, SQL Server Express, the development instance, another instance, or a container. For LocalDB, Redgate's connection page notes the Microsoft JDBC driver can't use LocalDB's named pipes and documents the jTDS driver with the Local DB resolver instead.
+- Never a database that matters. Flyway cleans and rebuilds it.
+- Desktop re-provisions the shadow only when a migration's checksum, name or description changed, the shadow is ahead of the migrations, the last migration failed, or the project contains only repeatable migrations.
+
+Match production's SQL Server version. Run shadow and build databases, including any container image, on the same SQL Server major version as production (for example 2019 against 2022), or change reports show spurious differences. Pin container image tags (`mcr.microsoft.com/mssql/server:<tag>`, or the `docker` provisioner's `databaseEngineVersion`) rather than `latest`, so reports are reproducible.
+
+### A shadow per developer on the same server
+
+A shared shadow gives unpredictable results, so every developer who generates migrations needs their own. Keeping it on the same server as their development database lets three-part names and filegroups resolve. Two ways to do that from one committed `flyway.toml`:
+
+- Redgate's shadow configuration tutorial shows a per-user shadow on a shared server, created on demand: `databaseName=<db-name>_shadow_${env.UserName:a}` with `provisioner = "create-database"` (preview), where `:a` keeps ASCII letters only (https://documentation.red-gate.com/fd/tutorial-configure-the-shadow-database-138347147.html). `UserName` is a Windows environment variable; use the equivalent elsewhere. Developers need permission to create databases on that server.
+- Desktop's guided shadow provisioning (preview, SQL Server projects) creates `<dev database>_shadow_<user>` on the development server and saves the connection to `flyway.user.toml`. It needs clean and create-database permissions. "Create and save connection" can erase an existing database with that name, so use "Manually configure" for a shadow that already exists.
+
+> Not from Redgate docs — starting point, validate in your environment.
+
+```toml
+# flyway.toml (committed): one shadow per developer on the shared development server
+[environments.shadow]
+url = "jdbc:sqlserver://<server>;databaseName=<db-name>_shadow_${env.UserName:a};encrypt=true;integratedSecurity=true"
+provisioner = "create-database"
+```
+
+On Azure SQL Database, per-developer shadows are separate databases your infrastructure as code creates (serverless or in an elastic pool, with `provisioner = "clean"`), or a local shadow on the developer's machine, which Redgate's development database page suggests can be faster. A local shadow can't resolve references to other Azure databases. On Managed Instance, put each developer's shadow on the development instance next to their development database.
+
+
+Azure SQL. Redgate's provisioner pages don't name Azure SQL Database or Managed Instance, and Flyway has no provisioner that creates or copies an Azure database for you. Redgate's development database configuration page gives three Azure SQL Database options for development and shadow databases: the serverless compute tier to save cost (a paused database answers the first connection with error 40613; retry and it resumes), an elastic pool, or a local shadow database instead. Put together for a mixed estate:
+
+| Target | Shadow and build database | Why |
+|---|---|---|
+| On-premises SQL Server | A database on the same or a nearby instance, with `clean` or `create-database` (preview), or a local container | Every provisioner applies; same server helps when there are cross-database references |
+| Azure SQL Database | A dedicated database created by your infrastructure as code (serverless or in an elastic pool), with `provisioner = "clean"` | Closest to production; your platform team owns creating it |
+| Azure SQL Database, cheaper CI | The `docker` provisioner (preview) with SQL Server pinned to the version you choose | Faster and free, but a SQL Server container accepts some T-SQL that Azure SQL Database rejects, so keep at least one check against a real Azure SQL database before release |
+| Managed Instance | A database on the instance with `clean`, or `create-database` (preview) once you've proved it | Managed Instance restores only from Blob Storage URLs, so `backup` doesn't fit |
+
+Record the choice in your decision log (file 01) and prove it in a scratch environment first.
+
+Documentation: https://documentation.red-gate.com/fd/shadow-and-build-environments-273973434.html, https://documentation.red-gate.com/fd/development-database-environment-configuration-138346960.html and https://documentation.red-gate.com/fd/tutorial-configure-the-shadow-database-138347147.html
+
+## 4. Provisioners
+
+A provisioner tells Flyway how to prepare an environment before it uses it. You set it on an environment with `provisioner = "<name>"` and configure it under `[environments.<env>.resolvers.<name>]`.
+
+| Provisioner | What it does | Notes |
+|---|---|---|
+| `clean` | Re-provisions an existing database by cleaning it | No preview label. Desktop's default shadow provisioner. It can't create a database. |
+| `create-database` (preview) | Creates the database if missing; on re-provision applies `reprovisionMethod` | SQL Server, MySQL and PostgreSQL. `reprovisionMethod` is `CLEAN` (default), `DROP` or `NONE`. The account needs rights to create databases. |
+| `backup` (preview) | Restores a `.bak` file (or an Oracle `.dmp`) | `backupFilePath` must be reachable by the database server. `backupVersion` is required if the backup has no history table. Needs `dbcreator`, `##MS_DatabaseManager##` or `sysadmin`. `generateWithMove` defaults to true. Re-provisioning restores over the database. |
+| `snapshot` (preview) | Builds a database from a schema snapshot file | `filename`, `snapshotVersion`, `cleanOnReprovision`. Schema only, no static data. Creates the database on SQL Server, PostgreSQL and MySQL. |
+| `docker` (preview) | Starts a matching container | Configured under `[environments.<env>.resolvers.docker]`. Detects engine and version from `sourceEnvironment`, or takes `databaseEngine` with `databaseEngineVersion`. `waitTimeout` defaults to `2m`. `url`, `user` and `password` must not be set on the environment; Flyway rejects them. `iAgreeToTheDBVendorsEula = true` is required for SQL Server. `keepAlive` defaults to true, so containers survive between commands and are reused. From engine 13.11.0 it builds SQL Server in a dedicated `flyway` database inside the container. Desktop offers it as "Provision with Docker". |
+| `docker-compose` (preview) | Starts containers from a compose file | For a custom image. `composeFile`, `services` and `waitTimeout` are all required. |
+| `clone` (Redgate Clone) | Deprecated | Removed from Desktop's connection dialogs and deprecated in the engine. Don't build on it; for a baseline with data, use `backup` (preview). |
+
+Choosing:
+
+- On-premises SQL Server, per-developer shadow: `clean` against an empty database you created, or `create-database` if the account may create databases.
+- Pipeline build database that must start clean every run: `create-database` with `reprovisionMethod` set to `DROP`, or `docker` on a runner with container support.
+- Test environment restored from a production-shaped backup (on-premises): `backup`, only on disposable databases, because re-provisioning restores over them. Anonymize the restored copy before anyone uses it (section 8).
+- Fast builds from a known schema without a backup: `snapshot`. It doesn't carry static data, so add that separately (section 6).
+
+Azure SQL: the `create-database` and `snapshot` pages name SQL Server, not Azure SQL Database or Managed Instance, so prove them on your target first. `backup` restores a file the server can read: Azure SQL Database doesn't restore native `.bak` files, and Managed Instance restores them only from Azure Blob Storage (`RESTORE ... FROM URL`), so treat `backup` as on-premises unless you prove otherwise. The fallback is `clean` against a database your platform team creates.
+
+System-versioned temporal tables are a common reason `clean` fails on a SQL Server build or shadow database, because SQL Server won't drop a table while system versioning is on. A `beforeClean` callback that turns system versioning off and drops the history tables, with an `afterClean` callback for anything left behind, is the usual fix. Clean doesn't drop users either, so SQL Server users can be left behind on a cleaned build or shadow database; an `afterClean` callback is the fix for those too. Prove it on a scratch database, and keep `cleanDisabled` on for every environment that matters (file 10).
+
+> Not from Redgate docs — starting point, validate in your environment.
+
+```toml
+# ci/build.toml
+[environments.build]
+url = "jdbc:sqlserver://<server>;databaseName=<db-name>_build;encrypt=true"
+user = "${env.FLYWAY_BUILD_USER}"
+password = "${env.FLYWAY_BUILD_PASSWORD}"
+provisioner = "create-database"
+
+[environments.build.resolvers.create-database]
+reprovisionMethod = "DROP"
+```
+
+The `docker` provisioner (preview) needs Docker running on the machine or runner. A shadow can copy its engine and version from the development environment; a pipeline build, where development doesn't exist, names them. The key names below are the documented ones. The exact `databaseEngine` value and version format for SQL Server aren't in this library, so take them from Redgate's docker provisioner page.
+
+> Not from Redgate docs — starting point, validate in your environment.
+
+```toml
+# Shadow in a container that matches development. No url, user or password: the provisioner supplies them
+[environments.shadow]
+provisioner = "docker"
+
+[environments.shadow.resolvers.docker]
+sourceEnvironment = "development"
+iAgreeToTheDBVendorsEula = true
+
+[environments.shadow.flyway]
+cleanDisabled = false
+
+# Pipeline build database in a container with a pinned engine and version
+[environments.build]
+provisioner = "docker"
+
+[environments.build.resolvers.docker]
+databaseEngine = "<SQL Server value from the docker provisioner page>"
+databaseEngineVersion = "<version you pin>"
+waitTimeout = "3m"
+iAgreeToTheDBVendorsEula = true
+
+[environments.build.flyway]
+cleanDisabled = false
+```
+
+- Converting an existing environment: remove `url`, `user` and `password` first, or Flyway rejects the configuration.
+- `iAgreeToTheDBVendorsEula = true` accepts Microsoft's SQL Server licence terms for the container. Whoever owns licensing decides that, not the assistant.
+- `keepAlive` defaults to true. On a developer machine, list and remove old containers with `docker ps` and `docker rm`, or set `keepAlive = false`.
+- From engine 13.11.0 the provisioner builds SQL Server in a dedicated `flyway` database inside the container.
+- A SQL Server container accepts some T-SQL that Azure SQL Database rejects (section 3).
+- From Desktop 9.8.2, Desktop doesn't save connection details for a docker-provisioned database.
+- An older `docker` configuration that uses only compose keys (such as `composeFile` and `services`) is forwarded to `docker-compose` with a warning. Mixing compose keys with the newer `docker` keys is an error. Move compose-based setups to `docker-compose` (preview) explicitly.
+
+A SQL Server service container that your pipeline starts beside the job (rather than the `docker` provisioner) opens its port before it accepts logins, so the first Flyway command can fail to connect.
+
+> Not from Redgate docs — starting point, validate in your environment.
+
+Let Flyway do the waiting instead of a script loop: set `connectRetries` and `connectRetriesInterval` on the build environment. `connectRetries` defaults to `0`, so without it the first command fails straight away (file 10 has both defaults). Pick values that cover your container's start-up time.
+
+```toml
+[environments.build]
+url = "${env.FLYWAY_BUILD_URL}"
+user = "${env.FLYWAY_BUILD_USER}"
+password = "${env.FLYWAY_BUILD_PASSWORD}"
+connectRetries = <retry-count>
+connectRetriesInterval = <seconds>
+```
+
+Documentation: https://documentation.red-gate.com/flyway/reference/configuration/environments-namespace/environment-provisioner-setting
+
+## 5. Building a database from source
+
+The standard way to get a development or test database is to build it from the repository:
+
+1. Create an empty database (a person with the admin account, or a provisioner).
+2. Run `flyway migrate` with the deploy account. Flyway applies the baseline `B` script if one exists, then every later migration in order, then repeatable migrations (file 07 explains `B` scripts).
+3. Load reference data (section 6) and, if needed, synthetic data (section 9).
+4. Run `flyway info` and `flyway validate` to confirm the state.
+
+> Not from Redgate docs — starting point, validate in your environment.
+
+```bash
+flyway migrate -environment=development
+flyway info -environment=development
+flyway validate -environment=development
+```
+
+If the baseline script can't build on an empty database (invalid objects, filegroups, cross-database dependencies, a very large database), build from a restored backup instead (section 4, `backup`), then run `flyway migrate` to bring it to the latest version.
+
+Schema-only copy with DBCC CLONEDATABASE. SQL Server's `DBCC CLONEDATABASE` creates a read-only, schema-only copy with no user data. It includes statistics and Query Store data unless you add `WITH NO_STATISTICS, NO_QUERYSTORE`; `VERIFY_CLONEDB` implies both and verifies the clone. Microsoft documents it for troubleshooting query performance only, says other uses aren't supported, requires `sysadmin`, and lists it as applying to SQL Server, not Azure SQL Database or Managed Instance. Building from migrations is the route for development databases.
+
+## 6. Reference and static data
+
+Reference data (lookup codes, statuses, configuration the application needs) has to be in every environment for the application to start. Two documented routes:
+
+- Static data tracking in Flyway Desktop. On the Schema model tab, Manage Static Data, choose the tables. In configuration it's `[[redgateCompare.staticDataTables]]` with `schema`, `table`, `excludedColumns` and `whereClause`. Each table needs a primary key, and `whereClause` (SQL Server only) filters rows on live databases, not the schema model. Generated migrations contain INSERT, UPDATE and DELETE statements, and undo scripts include the data changes.
+- Repeatable migrations. An `R__` script that merges the reference rows runs again whenever its checksum changes, so one file stays the single definition of the data.
+
+Script migrations and Data Compare are also documented. Pick one mechanism per table.
+
+Rules:
+
+- Only rows the application needs belong here. Customer and personal data never do.
+- A snapshot-provisioned database has no static data, so run the reference data migration after provisioning.
+- Check reference data for drift too. Redgate documents a static data drift check: https://documentation.red-gate.com/fd/tutorial-checking-for-drift-in-static-data-329778581.html
+
+Documentation: https://documentation.red-gate.com/fd/static-data-279085118.html and https://documentation.red-gate.com/fd/tutorial-track-static-data-for-schema-model-and-migrations-279085123.html
+
+## 7. Keeping development and test in step
+
+Migrate on branch switch. After switching branches, run `flyway migrate` against your development database. If the branch has fewer or different migrations than the database, `flyway info` shows it ahead: rebuild a per-developer database from source (section 5) instead of repairing it. Or give each branch its own database with the Git resolver:
+
+> Not from Redgate docs — starting point, validate in your environment.
+
+```toml
+[environments.development]
+url = "jdbc:sqlserver://<server>;databaseName=<db-name>_${git.branch:ad};encrypt=true"
+```
+
+This is the example on Redgate's Git resolver page. The `:ad` filter keeps ASCII letters and digits only, so a branch name can't inject characters into the connection string. Desktop honors the resolver but can't set it. Pair it with the `create-database` provisioner (preview) so a new branch's database is created on first use.
+
+Nightly rebuild. A scheduled job rebuilds the build database (or a disposable test database) from the repository, runs `flyway migrate`, then the automated tests (file 13). A failure means the repository can no longer build a database, which is better learned overnight than on release day.
+
+Drift check. Run the drift check on shared databases as its own step. With a build environment it compares the database against everything in the migrations, including pre-existing drift:
+
+> Not from Redgate docs — starting point, validate in your environment.
+
+```bash
+flyway check -drift -environment=test -check.buildEnvironment=build -check.failOnDrift=true
+flyway migrate -environment=test
+```
+
+Run these as separate pipeline steps. Chained verbs don't stop on `failOnDrift`. If drift appears, a person decides whether to revert it, capture it as a migration or filter it (file 14).
+
+## 8. Anonymized copies and production data
+
+Flyway doesn't mask or anonymize data. It doesn't read the data in your tables to find personal information, and no Flyway command removes it. If you want production-shaped data in test, you need a process outside Flyway that your security and data protection teams have approved. Don't invent one in a prompt, and never run production-shaped data through an AI assistant.
+
+Where an anonymized copy fits in the Flyway workflow:
+
+1. Restore or refresh the copy in an isolated, non-production environment that only authorized people can reach. The restore step is yours: a restore on-premises, a database copy or point-in-time restore on Azure SQL Database, or the `backup` provisioner (preview) for disposable on-premises databases.
+2. Anonymize it with your approved process, and verify the result with the checks that process defines. Nobody else touches the copy until that's signed off.
+3. Run `flyway info` against the copy. It shows what the history table says the state is, and it holds no table data.
+4. Run `flyway migrate` to bring the copy to the current version.
+5. Run `flyway validate`, and, for shared databases, the drift check (section 7).
+6. Release the copy to developers and testers.
+
+The order matters. Anonymize before migrate, so migrations never run against raw production data in a shared environment, and before any developer sees the copy.
+
+Rules that don't bend:
+
+- Production data never reaches a developer workstation or an AI prompt. That includes error text that contains values, query results and screenshots.
+- Developers get access to anonymized or synthetic copies only.
+- If a copy can't be anonymized, use synthetic data (section 9).
+- Keep the anonymization approval and the date with the environment's refresh record (file 17).
+
+## 9. Synthetic data
+
+Synthetic data carries no personal data. Two approaches:
+
+- SQL Data Generator, part of SQL Toolbelt Essentials. It generates realistic values from column types and rules, saves the setup as a project file, and has a Windows command line (`SQLDataGenerator /project:<file>.sqlgen`) that a test-only step can run after `migrate`. Check its documentation for supported versions.
+- Seed scripts: hand-written or generated T-SQL, kept in the repository and run after `flyway migrate`. They work for small, stable sets (a few customers, a few orders) used by automated tests, and they're reviewed like any migration.
+
+Keep seed scripts out of migrations that reach production. Run them from a pipeline step limited to development, build and test.
+
+## 10. Environment refresh runbook
+
+Use this when you rebuild or refresh a development, build or test database. A person runs it, with the right account for each step.
+
+1. Announce the refresh and window to everyone who uses the environment, and check nobody has unsaved changes in it.
+2. Confirm in the ticket that the target is a disposable environment, not uat or production.
+3. Choose the source: built from migrations (section 5), a restored backup (`backup` provisioner or your own restore), or a snapshot.
+4. Re-provision or restore with the admin account.
+5. If the source was production-shaped, anonymize it with your approved process and verify the result (section 8). Stop here if you can't.
+6. Run `flyway info`, then `flyway migrate` with the deploy account, then `flyway validate`.
+7. Load reference data (section 6) and, if needed, synthetic data (section 9).
+8. Run the smoke tests (file 13).
+9. Save `info` and `validate` output with the date and your name (file 17).
+10. Tell users the environment is back, and note the version it's at.
+
+If a step fails, stop. Don't run `repair` to push through. Read the error and decide with the team whether to rebuild.
+
+## 11. Limits
+
+- Flyway doesn't mask or anonymize data. That's a separate approved process (section 8).
+- `clean` re-provisions existing databases only. It can't create them.
+- `create-database`, `backup`, `snapshot`, `docker` and `docker-compose` are (preview). Verify their behavior in a scratch environment before you build a pipeline on them. The Redgate Clone (`clone`) provisioner is deprecated.
+- The `docker` provisioner rejects `url`, `user` and `password` on its environment, needs `iAgreeToTheDBVendorsEula = true` for SQL Server, and keeps containers alive by default.
+- `backup` restores over the database it's pointed at, so use it only on disposable databases. It doesn't fit Azure SQL Database, and Managed Instance restores only from Blob Storage URLs.
+- `snapshot` is schema only and carries no static data.
+- `create-database` and `snapshot` name SQL Server, not Azure SQL. Redgate's shadow page doesn't address Azure SQL as a shadow. Test before relying on either.
+- Static data tracking needs a primary key per table. `whereClause` is SQL Server only and applies to live databases.
+- `DBCC CLONEDATABASE` is a SQL Server diagnostic feature for troubleshooting only, needs `sysadmin`, makes a read-only copy and isn't available on Azure SQL.
+- The Git resolver works in configuration but you can't set it from Desktop.
+- Flyway can't tell whose change is whose in a shared development database.
+- Azure SQL Database has no three-part cross-database names, linked servers or `RESTORE`; Managed Instance restores only from Blob Storage.
+- Guided shadow provisioning is (preview) and SQL Server only.
+
+## 12. Instructions for the AI assistant using this file
+
+- Check the repository and the decision log (file 01) for each team's development database model (dedicated or shared) and hosting (on-premises SQL Server, Azure SQL Database or Managed Instance) before recommending a provisioner. If it isn't recorded, recommend dedicated and say why (section 2), but don't assume the team already has dedicated databases.
+- On a shared development database, never suggest applying the schema model, `migrate` or `clean` against it.
+- Always give each developer their own shadow; never suggest a shared shadow.
+- Don't suggest Azure SQL Database for code that uses three-part cross-database names.
+- When you mention a provisioner other than `clean`, say it's (preview). Don't put the label anywhere the feature isn't being described.
+- Never suggest `clean` outside build, shadow and scratch databases, and never suggest `repair` as a way to fix a development database. Rebuild from source.
+- Never suggest running `backup` against a database that matters.
+- Never suggest the Redgate Clone provisioner; it's deprecated. Don't guess the `docker` provisioner's `databaseEngine` value for SQL Server; point to Redgate's docker provisioner page. Don't set `iAgreeToTheDBVendorsEula` on the team's behalf; say what it accepts and let them decide.
+- When asked how to get production-shaped data into test, say plainly that Flyway doesn't anonymize data, then give the section 8 order and ask the person to follow their organization's approved process.
+- Never ask for, accept or work with real production data, rows, or error text containing values. Ask for the shape, schema and error code instead.
+- Use namespaced flags such as `-check.buildEnvironment`.
+- Use the deploy account for migrations, the read-only check account for checks, and the admin account only for creating databases and restoring.
+- Mark any code you add that isn't in this file with the not-from-Redgate-docs line.
+- Answer in the language the person writes in. Keep commands, keys, file names and error text in English.

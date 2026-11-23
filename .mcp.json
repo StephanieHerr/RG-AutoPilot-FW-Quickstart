@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "flyway": {
+      "type": "stdio",
+      "command": "flyway",
+      "args": ["mcp", "-mcp.toolsets=develop_migrations"],
+      "env": { "REDGATE_FLYWAY_MCP_SERVER_FEATURE": "true" }
+    }
+  }
+}

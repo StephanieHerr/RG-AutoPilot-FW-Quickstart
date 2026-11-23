@@ -1,0 +1,368 @@
+Flyway Enterprise AI library - file 13 of 32
+Code review, quality gates and database tests
+Flyway reference library, October 2026. Generic guidance written for your AI assistant. It contains no data from your environment, and you shouldn't add any to these files.
+
+What this covers: How to review migrations automatically before they reach a shared database: the `flyway check` modes (`-code`, `-changes`, `-drift`, `-dryrun`) and their settings, code review with SQLFluff and the Redgate rules for T-SQL, failing the build, custom regex rules for this team's risks, a staged rollout, change reports on pull requests, tSQLt tests, and an undo test.
+
+Not in this file: the pull request build as a whole (file 11), GitHub Actions workflow files (file 12), drift, snapshots and undo in depth (file 14), the ticket-key rule end to end (file 17), SQLFluff start-up errors (file 23), the last rule number and bundled versions (file 25), the review checklist card (file 27).
+
+Contents:
+1. The check modes and what each needs
+2. Where each check runs in your flow
+3. check -code: engines, dialect and scope
+4. The Redgate rules library
+5. Configuring rules for T-SQL
+6. Failing the build
+7. Custom regex rules for your team's risks
+8. Staged rollout: warn first, fail later
+9. Change reports on pull requests
+10. Database tests with tSQLt
+11. The undo test
+12. The review checklist
+13. In daily use
+14. Limits
+15. Instructions for the AI assistant using this file
+
+## 1. The check modes and what each needs
+
+`flyway check` runs one or more reports into one report file (HTML, with a JSON file beside it).
+
+| Flag | What it produces | Required settings |
+|---|---|---|
+| `-code` | Static review of your SQL migrations against rules | None beyond the migrations. Set `check.rulesDialect` (section 3) |
+| `-changes` | A report of what the pending migrations change, by object | A build environment (`check.buildEnvironment`, CLI only, default `default_build`), or `check.buildUrl`, or two snapshots (`check.deployedSnapshot` and `check.nextSnapshot`) |
+| `-drift` | Changes made to the target outside the process | A snapshot in the target (the default), a snapshot file, or a build environment. Detail in file 14 |
+| `-dryrun` | Generates a dry run script: the deployment SQL Flyway would run, in the report. Redgate calls it equivalent to a dry run from `migrate` or `prepare` | A target environment. `dryRunOutput` is a root-level setting, and in any multi-command run only the first command is recorded, so for a plain SQL file run `flyway migrate -dryRunOutput=<file>` as its own step (file 11) |
+
+Facts that decide how you wire it:
+
+- Reports from separate runs land in the same report file, one tab per type. Running a type again replaces its entry. Give each environment its own `-reportFilename`.
+- `check -changes` is built from snapshots of the build environment, so drift on the target is ignored by design. A clean change report never proves the target matches.
+- The build environment may be cleaned first. Never point it at a shared database. Give it a `clean` provisioner, or `cleanDisabled = false` on that environment only. Without either, `check` fails with `CHECK_BUILD_NO_PROVISIONER`.
+- `PLUGIN_CHECK_MISSING_BUILD_TARGET` means `-changes` or `-drift` lacks the build environment or snapshot it needs.
+- Run `check` as its own step. The `-code` and `-drift` docs both state that chained verbs keep running even when `failOnError` or `failOnDrift` trips.
+- With `-drift` and `-changes` in one run, drift always runs first.
+- Reports keep no history from engine 12.0.0: each run overwrites the report file, so publish or archive every run's HTML and JSON (file 17). `check` writes a report unless you pass `-check.generateReport=false`. The JSON report carries a `schemaVersion` field, and engine 13.9.0 switched to a new report implementation (`FLYWAY_NEW_REPORTS=false` restores the legacy one), so re-check anything that parses reports after an upgrade.
+- `-outputType=json` timestamps carry a UTC offset from engine 13.2.0; update any pipeline code that parses them.
+- From engine 13.6, the dry run script includes a deployment overview table.
+- With `outputProgress` enabled, `-drift`, `-changes` and `-dryrun` report phase-level progress (from engine 12.9).
+- `check.appliedMigrations` (a string array) is a `-changes` input that takes its value from `flyway info -migrationIds`.
+
+Documentation: https://documentation.red-gate.com/flyway/reference/commands/check
+
+## 2. Where each check runs in your flow
+
+| Stage | Database | Checks |
+|---|---|---|
+| Pull request job | None for `-code`; then `build` (throwaway, cleaned each run) | `-code` first (cheap failures first), then the build, `-changes`, tSQLt tests, undo test |
+| Pre-release gate before `test`, `uat`, `production` | The target, read-only check account | `-drift`, `-dryrun` |
+| After deploy | The target | `info`, `validate`, a fresh snapshot (file 14) |
+
+## 3. check -code: engines, dialect and scope
+
+Two engines run: SQLFluff, with Redgate's rules, and a regular-expression engine for plain text bans. The Flyway Enterprise CLI ships its own SQLFluff, so you install no Python.
+
+- When the bundle is active, the CLI prints a line such as `SqlFluff version x.y.z (Redgate Bundle)`. Look for it in the pipeline log.
+- If the bundled engine is missing, Flyway warns and falls back to a locally installed SQLFluff, with no default config loaded. `FLYWAY_ENV_NATIVE_SQLFLUFF=false` forces your own SQLFluff install.
+- The bundled SQLFluff on Linux runners needs GLIBC 2.35 or later; older distributions fail with `version 'GLIBC_2.35' not found`.
+- SQLFluff isn't called when there are no pending migrations, so a run with nothing pending reviews nothing.
+- `check.sqlfluffEnabled` and `check.regexEnabled` (both default `true`, from engine 11.9) turn each engine on or off.
+- `check -code` reviews migrations from `filesystem:` locations only.
+
+The dialect decides what parses. Flyway uses `check.rulesDialect` if set, otherwise the dialect from the JDBC URL, otherwise ANSI. A `dialect =` line in `sqlfluff.cfg` has no effect. Set `rulesDialect = "tsql"`; a run with no connection (pre-commit, script scope) otherwise reviews as ANSI and catches far less.
+
+`check.scope` takes `DEFAULT`, `ALL`, `PENDING` or `SCRIPT` (CLI only). With a connection URL only pending migrations are reviewed; without one, all are. `ALL` is for a first audit, never permanent.
+
+In Flyway Desktop: on the Migration scripts page choose Check, tick `code`, then Run check. Generate migrations also shows the review before you save the new scripts, and from Desktop 9.3.3 an issue with a suggested fix offers "Apply fix". Desktop uses the project's configured check engines.
+
+Documentation: https://documentation.red-gate.com/flyway/reference/commands/check/check-code
+
+## 4. The Redgate rules library
+
+Redgate publishes numbered RG rules in a group named `redgate`, except RG18 and RG19, which are only in the `all` group; see the rules library page for the current list (file 26 links it). Start with these, in the library's words:
+
+| Rule | Wording |
+|---|---|
+| RG01 | "Avoid using DROP TABLE statements." |
+| RG03 | "Avoid using DROP DATABASE statements." |
+| RG06 | "Check for Delete without Where clause." |
+| RG09 | "Check for Update without Where clause." |
+| RG10 | "Check for data type modifications in ALTER TABLE statements." |
+| RG13 | "Check for TRUNCATE statements." |
+| RG14 | "Check for DROP COLUMN statements." |
+
+Two are T-SQL only: RG17 (CREATE TABLE without an MS_Description) and RG20 (unbracketed object names). RG21 enforces a naming prefix per object type; RG22 flags a script that creates and drops the same table.
+
+RG01 reports every DROP TABLE, temporary tables included; section 7 adds a rule that ignores them. SQLFluff's own AM04 ("Query produces an unknown number of result columns") flags `SELECT *` if you add it to `rules`; section 7 gives a regex alternative. The shipped `conf/sqlfluff.cfg` enables a subset of the standard SQLFluff rules plus the Redgate rules; the repository's `sqlfluff.cfg` follows that shape. Name your rules explicitly.
+
+The rules as listed on the library page when this file was written (the page is authoritative and may have more):
+
+| Rule | Checks | Dialects | Notes |
+|---|---|---|---|
+| RG01 | DROP TABLE | all | |
+| RG02 | CREATE TABLE with more than a maximum number of columns | all | `max_columns`, default 20 |
+| RG03 | DROP DATABASE | all | |
+| RG04 | Object references with more name parts than allowed | all | `parts_allowed`, default 1,2 |
+| RG05 | Index creation mixed with other changes | all | |
+| RG06 | DELETE without WHERE | all | |
+| RG07 | GRANT statements | all | |
+| RG08 | ALTER USER | PostgreSQL, Snowflake | No effect on SQL Server, so listing it in the repository's `sqlfluff.cfg` changes nothing |
+| RG09 | UPDATE without WHERE | all | |
+| RG10 | Data type change in ALTER TABLE | all | |
+| RG11 | CREATE ROLE | all | |
+| RG12 | Changes to PUBLIC role privileges | all | |
+| RG13 | TRUNCATE | all | |
+| RG14 | DROP COLUMN | all | |
+| RG15 | CREATE TABLE without a primary key | all | |
+| RG16 | DROP PARTITION | MySQL | |
+| RG17 | CREATE TABLE without an MS_Description | T-SQL | |
+| RG18 | Table names should be plural | all | `all` group only; mutually exclusive with RG19 |
+| RG19 | Table names should be singular | all | `all` group only; mutually exclusive with RG18; from engine 12.2.0 |
+| RG20 | Unbracketed object names | T-SQL | From engine 12.2.0 |
+| RG21 | Required name prefix per object type | all | `[sqlfluff:rules:redgate.prefix_naming]`, for example `required_table_prefix`; from engine 12.2.0 |
+| RG22 | Same table created and dropped in one script | all | `redgate.create_drop_table_order` `mode`: `CreateThenDrop`, `DropThenCreate`, `Both` (default); from engine 12.3.0 |
+| RG23 | Forbidden table or column alias names | all | `redgate.forbidden_aliases`, default empty; from engine 12.4.0 |
+
+Documentation: https://documentation.red-gate.com/flyway/reference/code-review-rules/redgate-sqlfluff-rules-library
+
+## 5. Configuring rules for T-SQL
+
+> Not from Redgate docs — starting point, validate in your environment.
+
+```toml
+# flyway.toml, committed
+[flyway.check]
+rulesDialect = "tsql"
+rulesConfig = "code-review/sqlfluff.cfg"
+rulesLocation = "code-review/regex"
+
+[flyway.check.code]
+failOnError = false   # the default; true at stage 2 (section 8)
+```
+
+> Not from Redgate docs — starting point, validate in your environment.
+
+```text
+# code-review/sqlfluff.cfg (SQLFluff INI format)
+[sqlfluff]
+rules = RG01,RG03,RG06,RG09,RG10,RG13,RG14
+warnings = RG01,RG10
+```
+
+How Flyway treats this file:
+
+- Flyway resolves at most one config file per run and never merges: `rulesConfig` if set (it must exist), otherwise the installation's `conf/sqlfluff.cfg` when the Redgate bundle is active. When it resolves a file, it passes `--config` and `--ignore-local-config`, so local `.sqlfluff`, `pyproject.toml`, `tox.ini`, `setup.cfg` and `pep8.ini` files are ignored. When it resolves none (your own SQLFluff, or the bundle without `conf/sqlfluff.cfg`), SQLFluff's normal discovery of local files applies. With `rulesConfig` unset, your project's rules silently don't run.
+- Every enabled rule is an error unless it sits under `warnings`. `exclude_rules` turns a rule off.
+- Prefer an explicit `rules =` list, as Redgate recommends over `exclude_rules`. `rules = redgate` picks up new rules on upgrade.
+- Gotcha: `rules = RG01,RG02` together with `exclude_rules = redgate` excludes the whole group, so neither rule runs.
+- SQLFluff `noqa` comments suppress rules locally: for the whole file `-- noqa: disable=AM01`; for a range `-- noqa: disable = AL02` ... `-- noqa: enable = AL02`; for one line, at the end of it, `-- noqa: CP02,CP03`. Flyway Enterprise reports each one as a "Policy Overrides" violation, at the severity `check.code.noqaSeverity` sets: `DISABLED`, `WARNING` (the default) or `ERROR`. At `ERROR`, a suppression is an error-severity violation, so it fails the run when `failOnError` is on.
+- Flyway Desktop's Code Review Policies tab edits the same file. It keeps unmanaged sections such as custom plugins, but regenerates the `rules` and `warnings` lines and the parameter sections, so comments and ordering there are lost. It doesn't edit regex rules. Review that diff in the pull request.
+
+Profiles (`check.code.profile`, `check.code.profiles`, from engine 13.6.0) let one product line run lighter by excluding rules. A run records no profile name, so log it in the pipeline output. The profiles setting page says Flyway ships no profiles and naming an undefined one fails the command, so define every profile you use, including a `schemaModel` profile for schema model files, under `[flyway.check.code.profiles]`. Flyway Desktop names `schemaModel` automatically when it reviews schema model SQL.
+
+> Not from Redgate docs — starting point, validate in your environment.
+
+```toml
+# Adapted from the profiles setting page's example. Its list also names RG16, a MySQL-only rule,
+# which SQL Server projects don't need.
+[flyway.check.code.profiles]
+schemaModel = ["capitalisation", "layout", "RG01", "RG03", "RG05", "RG06", "RG09", "RG10", "RG13", "RG14", "RG22"]
+```
+
+Run a profile with `"-check.code.profile=<profile-name>"`. How profiles behave:
+
+- Profile names match case-insensitively.
+- From engine 13.11.0 a profile can also exclude a regex rule by its code, written in full and matched case-insensitively. Groups and wildcards such as `LT*` apply to SQLFluff rules only.
+- An entry that matches no rule logs a warning (when SQLFluff is enabled) and never fails the run, so a typo silently excludes nothing. Read the log.
+- Excluding a regex rule in a profile affects only that run, unlike setting its `severity` to `disabled`, which turns it off everywhere.
+
+Documentation: https://documentation.red-gate.com/flyway/reference/code-review-rules/configuring-sqlfluff-rules
+
+## 6. Failing the build
+
+`check.code.failOnError` (part of Flyway Enterprise, CLI only, default `false`) makes `check -code` fail when a violation has severity `error`. Warnings are reported and never fail the run. In TOML it sits under `[flyway.check.code]`.
+
+> Not from Redgate docs — starting point, validate in your environment.
+
+```bash
+flyway check -code "-check.code.failOnError=true"
+```
+
+The exit code is the gate: in GitHub Actions, make `check` its own step (file 12). Redgate's `migrations/checks` action defaults `fail-on-code-review` to `true` and passes `-check.code.failOnError=true` for you, so set `fail-on-code-review: 'false'` while you are at stage 0 or 1 of section 8.
+
+If a violation is a false positive, fix the rule, or suppress with `-- noqa` and a reason in the pull request.
+
+## 7. Custom regex rules for your team's risks
+
+Plain text bans suit the regex engine. One TOML file per rule, named `CODE__Description.toml`, in the folder `check.rulesLocation` names. That folder becomes the only place Flyway looks, and Flyway doesn't look in its sub-folders. From engine 12.0.0 Flyway no longer ships a default set of Redgate regex rules, so every regex rule is one you write. Fields: `code`, `dialects`, `rules` (Java regular expressions), `description`, `severity` (`error`, `warning`, `disabled`). Use `dialects = ["TEXT"]`, which applies to every database; a rule for another dialect such as `tsql` applies only when the JDBC URL matches it. The repository's `Rules/DM*.toml` files use `TEXT`. Patterns sit in TOML strings, so each backslash doubles. `(?i)` makes a pattern case-insensitive. The regex engine no longer converts line endings before matching, so check how a pattern handles `\r\n` in files saved on Windows. The engine is on by default (`check.regexEnabled`).
+
+A regex sees text, not structure, one file at a time. Redgate's docs don't say whether a rule can see the file's name, or whether a pattern is applied to the whole file or line by line. Every rule below is a composed starting point, tested as a plain Java regular expression against sample statements. Prove each in the POC with a known-bad and a known-clean script (section 8), including whether a pattern can span lines; ZQR03 and the `\A` patterns depend on it.
+
+> Not from Redgate docs — starting point, validate in your environment.
+
+```toml
+# code-review/regex/ZQR01__No_drop_of_permanent_table.toml
+code = "ZQR01"
+dialects = ["TEXT"]
+rules = ["(?i)\\bDROP\\s+TABLE\\s+(?:IF\\s+EXISTS\\s+)?(?![\\[\"]?#)(?!IF\\s+EXISTS)"]
+description = "DROP TABLE on a table that is not a temporary table needs an approved exception"
+severity = "error"
+```
+
+It skips `#temp` and `[#temp]` names, misses names after the first in a multi-table DROP, and flags `tempdb..#name`.
+
+> Not from Redgate docs — starting point, validate in your environment.
+
+```toml
+# code-review/regex/ZQR02__Personal_data_column_added.toml
+code = "ZQR02"
+dialects = ["TEXT"]
+rules = ["(?i)\\bADD\\s+(?:COLUMN\\s+)?\\[?(?:first_?name|last_?name|given_?name|family_?name|full_?name|surname|e_?mail(?:_?address)?|phone(?:_?number)?|mobile(?:_?number)?|date_?of_?birth|dob|national_?id|passport(?:_?(?:no|number))?|iban|tax_?id)\\]?\\s"]
+description = "New column name looks like personal data: confirm classification and retention with the data owner"
+severity = "warning"
+```
+
+The name list is an illustration; your data protection owner supplies the real one. It matches ALTER TABLE ... ADD only, not columns inside CREATE TABLE, and judges names, not data. A long or changing list belongs in a custom SQLFluff rule that reads a list file (`check.sqlfluffCustomRulesPath`, from engine 12.7.0, Redgate's bundled SQLFluff only, a folder with an `__init__.py`, lint-only, reserved prefixes such as `RG` rejected; see file 26).
+
+Such a folder is a standard SQLFluff plugin. Its `__init__.py` provides a `get_rules` hook, which imports the rules inside the hook, and optionally `get_configs_info` for rule parameters. Each rule class extends `BaseRule` and is named `Rule_<CODE>`: `Rule_TP01` reports as `TP01`. The class docstring becomes the rule's title. Custom rules add to the rules in the resolved config file; they don't replace it.
+
+> Not from Redgate docs — starting point, validate in your environment.
+
+```toml
+# code-review/regex/ZQR03__SELECT_star_in_view.toml
+code = "ZQR03"
+dialects = ["TEXT"]
+rules = ["(?is)\\bCREATE\\s+(?:OR\\s+ALTER\\s+)?VIEW\\b(?:(?!\\bGO\\b).)*?\\bSELECT\\s+(?:(?:DISTINCT|ALL)\\s+)?(?:TOP\\s*\\(?\\d+\\)?\\s+)?(?:\\[?\\w+\\]?\\.)?\\*"]
+description = "View selects with * : list the columns so a table change cannot alter the view's shape"
+severity = "warning"
+```
+
+It ignores `COUNT(*)` and stops at `GO`. Dynamic SQL inside a view body is out of reach.
+
+Missing ticket key in the migration description. `check -code` reviews script content, and nothing documents a rule matching file names, so don't rely on it to see a name such as `V<version>__<ticket-key>_add_column.sql`. Check names in a pull request step (file 17):
+
+> Not from Redgate docs — starting point, validate in your environment.
+
+```bash
+# Fails if a newly added migration file name lacks a ticket key such as ABC-123.
+# Ticket keys are case-sensitive: adjust the pattern to your tracker's project keys.
+set -euo pipefail
+BAD=0
+for f in $(git diff --name-only --diff-filter=A origin/main...HEAD -- migrations/); do
+  if ! echo "$(basename "$f")" | grep -Eq '^[VU][^_]*__.*[A-Z][A-Z0-9]+-[0-9]+'; then
+    echo "Missing ticket key in migration name: $f"; BAD=1
+  fi
+done
+exit $BAD
+```
+
+A header comment is an alternative the regex engine can check: the pattern `\A(?![\s\S]*--\s*ticket:\s*[A-Z][A-Z0-9]+-[0-9]+)` matches a file with no `-- ticket: ABC-123` line. Prove it first; it depends on how Flyway feeds the file to the engine.
+
+Missing `SET XACT_ABORT ON` (suggestion only). Flyway runs each migration in a transaction where SQL Server allows it and stops at the first error, so this matters mostly for scripts that open their own transactions or use TRY/CATCH. Microsoft documents that with XACT_ABORT on, a run-time error rolls back the transaction. A warning-level rule with the pattern `(?i)\A(?![\s\S]*\bSET\s+XACT_ABORT\s+ON\b)` can remind authors; decide with your DBAs whether it earns its noise.
+
+Documentation: https://documentation.red-gate.com/flyway/reference/code-review-rules/configuring-regex-rules
+
+## 8. Staged rollout: warn first, fail later
+
+| Stage | Settings | The team sees |
+|---|---|---|
+| 0. Size the problem | Locally: `-check.scope=ALL`, `failOnError=false` | Existing findings; nothing in CI |
+| 1. Report only | `failOnError=false`, report on every pull request | Findings only |
+| 2. Fail on the dangerous few | `failOnError=true`; data-loss rules (RG01 or ZQR01, RG06, RG09, RG13, RG14) at error, the rest at warning | Dangerous statements block |
+| 3. Wider enforcement | More rules at error by team agreement | The agreed standard |
+
+Record the stage in your decision log (file 01). Switch drift failure on only after existing drift is resolved (file 14), and remove direct write access to production only once the pipeline is the fastest route.
+
+Prove the gate itself. These all give zero violations and exit code 0, the same as a clean migration: a file over SQLFluff's size limit is skipped; SQLFluff can't parse a statement and Flyway's report omits the parse error; the dialect resolved to ANSI; `rulesConfig` is unset; a custom rule code hit a reserved prefix; the bundled SQLFluff wasn't present. The control is a known-bad and a known-clean script, kept outside your migrations folders, reviewed on every build with script scope, with an exact violation count asserted per rule code:
+
+> Not from Redgate docs — starting point, validate in your environment.
+
+```bash
+flyway check -code -check.rulesDialect=tsql \
+  -check.scope="script" -check.scriptFilename="code-review/tests/V001__violations.sql" \
+  -reportFilename=reports/rule-proof
+```
+
+Put the T-SQL you actually use into the known-clean file, too. In testing against a recent SQLFluff release of the line bundled with Flyway, the `tsql` dialect couldn't parse `CREATE STATISTICS`, `ENABLE TRIGGER ALL`, `CHECKPOINT`, `CONTAINS()` predicates, table and database `CHANGE_TRACKING`, `EXECUTE AS USER` and `REVERT`, `TRUNCATE ... WITH (PARTITIONS)`, or `ADD` and `DROP SENSITIVITY CLASSIFICATION`. A migration built from statements like these can pass the SQLFluff rules without being checked. Regex rules still read the raw text, and a reviewer still reads the file. Re-test the list when you upgrade.
+
+Assert each code separately, and zero on the clean file. Script scope arrived in engine 11.17.1, whose release shipped without the bundled SQLFluff; use 11.17.2 or later.
+
+## 9. Change reports on pull requests
+
+Reviewers should see what will change and the exact SQL, not only the migration file.
+
+> Not from Redgate docs — starting point, validate in your environment.
+
+```bash
+# ci/test.toml (read-only check account) and ci/build.toml define the two environments (file 10).
+flyway check -changes -dryrun -configFiles=ci/test.toml,ci/build.toml -environment=test \
+  -check.buildEnvironment=build -reportFilename=reports/pr-check
+```
+
+Publish `reports/pr-check.html` and the JSON file beside it as workflow artifacts. For code review, the JSON gives each violation's `line_no`, `line_pos`, `line_no_end`, `line_pos_end`, `file_pos`, `file_pos_end`, `description`, `code`, `warning`, `engine`, `help` and optional `fixes`, and a SARIF 2.1.0 file is written beside the HTML and JSON, readable by GitHub code scanning and Azure DevOps (file 12, section 15). The `-changes` JSON lists `onlyInSource`, `onlyInTarget` and `differences`, each difference with object name, schema, type and definitions before and after. Redgate's `migrations/checks` action runs these checks, uploads the pre-deployment report as an artifact (7 days by default) and, from engine 12.2.0, uploads code review SARIF to GitHub code scanning for inline annotations. On a private repository that needs GitHub Code Security (Advanced Security), `security-events: write` and `actions: read`; a failed upload doesn't fail the action. With no build database set, the action provisions a Docker one (preview); for SQL Server that needs `build-docker-i-agree-to-the-db-vendors-eula: true` and Docker on the runner (file 12).
+
+## 10. Database tests with tSQLt
+
+tSQLt is an open-source unit test framework for SQL Server that Redgate sponsors. SQL Test, if your organization owns it, is Redgate's SSMS front end for writing tSQLt tests. Flyway has no `test` command: it builds the database and your pipeline runs the tests. Redgate's Database Unit Testing page (its examples use legacy `flyway.conf` files; use `flyway.toml` and file 04's sign-in) gives two patterns: repeatable scripts in a separate location, or a separate project. From it:
+
+- tSQLt adds objects `clean` can't remove. Add a `beforeClean__Uninstall-tSQLt.sql` callback that runs `tSQLt.Uninstall` when it exists.
+- Pattern one: put `tSQLt.class.sql` in a separate folder as `R__tSQLt.class.sql`, with a script configuration file `R__tSQLt.class.sql.conf` holding `executeInTransaction=false`, add the folder to `locations`, and keep it out of the `locations` of every environment except `build`.
+- A script configuration file with `shouldExecute=${environment}==build` limits a script to builds, if the pipeline passes `-placeholders.environment=build` (a custom placeholder). The built-in `${flyway:environment}` placeholder holds the environment name without that flag; prove it before switching.
+- Keep tSQLt objects out of comparisons; new Desktop projects ignore them by default.
+- tSQLt installs a CLR assembly; the page's example sets `TRUSTWORTHY ON` on the build database for it. Microsoft's feature comparison lists CLR as not supported in Azure SQL Database and supported in Azure SQL Managed Instance, and tSQLt's own issue tracker shows the install failing on Azure SQL Database. So run tSQLt on a SQL Server build database (a container or Developer edition) or on Managed Instance, even when the target is Azure SQL Database. Confirm current requirements on tsqlt.org.
+
+Run tests in the pull request job, after `migrate` on `build`, never on a shared database. The page's example wraps `tSQLt.RunAll` in an empty TRY/CATCH, which hides failures; don't copy it.
+
+> Not from Redgate docs — starting point, validate in your environment.
+
+```powershell
+# After: flyway migrate (build). Fails the job when any test did not pass.
+$q = "EXEC tSQLt.RunAll;"
+sqlcmd -S "<server>" -d "<build-db-name>" -b -Q $q
+if ($LASTEXITCODE -ne 0) { throw "tSQLt reported a failure or error" }
+sqlcmd -S "<server>" -d "<build-db-name>" -b -Q "EXEC tSQLt.XmlResultFormatter" -o "reports/tsqlt.xml"
+```
+
+The page's example also writes JUnit XML with `tSQLt.XmlResultFormatter`. Check how `RunAll` signals failure on your tSQLt version, and test it by breaking one test on purpose.
+
+## 11. The undo test
+
+An undo script you haven't run is a guess. The pull request build proves each one:
+
+1. `flyway migrate -environment=build -target=<version before the pull request>`, then load representative non-production data.
+2. Snapshot: `flyway snapshot -environment=build -snapshot.filename=reports/before.json`.
+3. `flyway migrate -environment=build` to apply the new migrations.
+4. `flyway undo -environment=build -target=<first-new-version>` (undo runs newest first and stops at a version below the target, so the target itself is undone; `info` shows what runs).
+5. Snapshot again to `reports/after.json`.
+6. `flyway check -changes -check.deployedSnapshot=reports/before.json -check.nextSnapshot=reports/after.json` (a bare path is read as a file; the `filesystem:` prefix is optional), and require empty `onlyInSource`, `onlyInTarget` and `differences` lists in the JSON.
+7. `flyway migrate -environment=build` again. The migrations must apply a second time.
+
+Step 6 uses the documented snapshot form of `-changes`, which needs no database. Treat a missing or unreadable JSON path as a failure, never a pass. Undo restores structure, not rows. File 12's pull request workflow runs a shorter form (steps 3, 4 and 7) on every pull request.
+
+## 12. The review checklist
+
+File 27's review mode holds the full reviewer card. In short: the pull request names a `<ticket-key>`; no unexplained error or `noqa`; the change report and dry-run SQL match the description; an undo exists and passed section 11; non-transactional statements sit in their own migration (file 14); no applied migration was edited.
+
+## 13. In daily use
+
+- Developers: read the inline annotations first, then the summary table. `SQLFluff (Custom)` rows are your own rules. Fix a violation, or justify it in the pull request.
+- Zero findings on a large migration: check section 8 first.
+- DBAs: scan the change report for dropped or altered objects the description omits.
+- Platform owners: keep rules and known-bad script in the repository; review rule changes like code.
+
+## 14. Limits
+
+- Static review reads migration text. It can't see rows affected, dynamic SQL, or what a called procedure does. Views and synonyms aren't resolved.
+- No Redgate rule covers renames. Custom rules are lint-only.
+- An oversized or unparsable file can produce a false clean result.
+- `check` doesn't see change made outside the pipeline; `-changes` ignores drift.
+
+## 15. Instructions for the AI assistant using this file
+
+- Quote rule wording from section 4. Never invent a rule number or state the last one; the section 4 table may lag the rules library page, so point to the page.
+- Use `dialects = ["TEXT"]` in regex rules, use the namespaced `"-check.code.failOnError=true"`, and never tell anyone to copy in Redgate-supplied regex rules: none ship.
+- Read the workflow and the decision log (file 01) for the current rollout stage, or ask, before proposing settings. Never propose full enforcement on day one.
+- Give `check` as its own step, never chained with `migrate`, and never use a shared database as the build environment.
+- For any custom rule, include a known-bad script, a known-clean script and an exact-count assertion per code. Say section 7's rules are composed starting points.
+- Use only keys shown here or on the linked docs pages. If unsure of a flag, say so and name the page.
+- Answer in the language the person writes in. Keep commands, keys, file names and error text in English.

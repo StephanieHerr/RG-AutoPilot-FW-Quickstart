@@ -1,0 +1,252 @@
+Flyway Enterprise AI library - file 25 of 32
+Versions and currency
+Flyway reference library, November 2026. Generic guidance written for your AI assistant. It contains no data from your environment, and you shouldn't add any to these files.
+
+What this covers: The only file in the library that says what is current: the Flyway engine and Flyway Desktop releases, which release lines get fixes, which capabilities carry a preview label, the code review rule ceiling, builds you should never install, deprecations, the version floors and breaking changes that matter to a team on SQL Server and Azure SQL with GitHub Actions, and what Redgate has announced but not released. Every other file defers to this one. When Redgate ships a release, this is the one file to replace.
+
+Not in this file: How anything works (file 00 routes you). What Flyway doesn't do (file 24). Documentation links (file 26).
+
+Contents:
+1. When this was checked
+2. Current releases
+3. How the versions fit together
+4. Preview labels
+5. Code review rules and SQLFluff
+6. Builds to avoid
+7. Deprecations
+8. Version floors and upgrade watch-outs
+9. How to check what you're running
+10. In daily use
+11. Pages to re-check
+12. Announced, not released
+13. Instructions for the AI assistant using this file
+
+## 1. When this was checked
+
+Checked 10 November 2026, by reading Redgate's live pages. Flyway engine and Flyway Desktop each ship every week or two, so treat everything here as a snapshot. If this file is more than a month old, read the release notes in section 11 before you rely on a version or a preview label.
+
+What was read live on 10 November 2026:
+- Flyway engine release notes (page last updated 5 November 2026). Newest entry: 13.12.1, dated 2026-11-05. The page goes from 13.11.0 to 13.10.1 with no 13.10.2 entry. 13.10.2 was listed on 19 October 2026 and has since been removed, so don't quote it.
+- Flyway Desktop 9 release notes (page last updated 10 November 2026). Newest entry: 9.11.5, dated 10 November 2026. The entry dated 14 October 2026 that had no version number on 19 October is now numbered 9.10.7.
+- The Flyway roadmap page (section 12). It shows no last-updated date.
+- Redgate's API (Java) page (updated 5 November 2026) for the Java floor in section 3, and the Insights Deployments page (updated 1 October 2026) for section 4. Both were read during the library merge on 10 November 2026.
+
+Read live on 19 October 2026 and not re-read since: the Flyway Insights pages (Security, hosting and data, Get started, DORA metrics, Sharing with your organization, Business value, and the `publishResult` and `pipelineId` setting pages), the Flyway MCP Server page, the AI services in Flyway page, the provisioner pages, the migration tags setting pages, the Redgate SQLFluff rules library page, and the SQL Compare 16.1 and SQL Prompt 11.5 release notes.
+
+Read live on 20 October 2026 and not re-read since: the `red-gate/flyway-actions` releases page, the `red-gate/setup-flyway`, `actions/checkout`, `actions/upload-artifact`, `actions/download-artifact`, `azure/login` and `ServiceNow/servicenow-devops-change` repository tags, and the vendor pages for the AI tool floors in section 2 (GitHub Copilot in SSMS on Microsoft Learn, Visual Studio MCP, LM Studio MCP).
+
+Not re-read live: the older version floors in section 8 (engine 13.9.0 and earlier, Desktop 9.10.6 and earlier), which come from the release notes as previously recorded.
+
+## 2. Current releases
+
+| Component | Checked 10 November 2026 | Notes |
+|---|---|---|
+| Flyway engine (CLI and Docker image) | 13.12.1, released 5 November 2026 | 13.12.0 shipped on 30 October 2026, 13.11.0 and 13.11.1 on 21 October 2026. Section 8 lists what changed. The engine release notes are the authority |
+| Flyway Desktop | 9.11.5, released 10 November 2026 | It bundles engine build `13.12.2-rc3200`. That is a release-candidate build, not a released engine: there is no 13.12.2 in the engine release notes (section 3) |
+| Object level history (Flyway Desktop) | Generally available from Desktop 9.10.7 (14 October 2026), per the Desktop release note | The roadmap page still lists it as Preview (checked 10 November 2026). Follow the release note, and confirm on the feature's own docs page |
+| Flyway MCP server | Preview | Needs engine 13.0.0 or later and `-mcp.toolsets` |
+| Flyway Insights | Public preview, for Flyway Enterprise | Was called Flyway Pipelines. The `publishResult` and `pipelineId` setting pages still use the old name |
+| Code review rules library | Redgate rules RG01 to RG23 | No RG24 on the rules library page (checked 19 October 2026) |
+| Microsoft SQL Server JDBC driver bundled with the CLI | `mssql-jdbc` 12.10.2 | Per the engine release notes (upgraded in 11.16.0, no later change listed through 13.12.1). The CLI also bundles Microsoft's `azure-identity` and `msal4j` libraries for Entra sign-in; 13.12.0 updated `msal4j` to 1.23.1 for vulnerabilities in its dependencies. Confirm by the jar name in your install's `drivers` folder |
+| Azure Key Vault resolver | Generally available in Flyway Enterprise from engine 12.5.0 | No preview label on its reference page. File 10 covers setup and what to prove |
+
+Some Redgate command pages show example console output from a later build number than any release note lists. Never cite a version from example output. Only the release notes count.
+
+Other Redgate tools version independently of Flyway. Checked 19 October 2026, not re-read since:
+- SQL Compare: 16.1.13.29655, 15 October 2026, marked as a Frequent Updates release on the SQL Compare 16.1 release notes.
+- SQL Prompt: 11.5.6.27904, 13 October 2026, on the SQL Prompt 11.5 release notes.
+- SQL Data Compare and Redgate Monitor: not checked here. See their release notes pages (section 11 and file 26).
+
+GitHub Actions used in this library's examples, checked 20 October 2026. Use the major tag shown, and pin production workflows to a full commit SHA.
+
+| Action | Major to use | Newest release seen | Notes |
+|---|---|---|---|
+| `red-gate/setup-flyway` | `@v3` | v3.3.3 | v3 requires `edition` and `i-agree-to-the-eula`. `version` defaults to latest, so always pin it. Examples showing `@v1` with `edition` are outdated |
+| `red-gate/flyway-actions` (checks, deploy, undo, generate, state prepare and deploy) | `@v2` | v2.7.2, 8 September 2026 | Use one version for every sub-action. From v2.6.0 every action requires engine 12.0.0 or later and adds SARIF upload and `migrations/generate`. From v2.7.1 checks always provisions a Docker build database when no build inputs are given |
+| `red-gate/FlywayGithubAction` | Don't use | None | Deprecated and migrate-only; move to `setup-flyway` plus `flyway-actions` |
+| `actions/checkout` | `@v7` | v7.0.1 | `flyway-actions` moved its own workflows to v7 in v2.7.0 |
+| `actions/upload-artifact` | `@v7` on github.com | v7.0.1 | Its README says v4 and later aren't supported on GitHub Enterprise Server; use the v3 line there. `flyway-actions` uploads with v7 internally, so its uploads can fail on Enterprise Server (file 23) |
+| `actions/download-artifact` | `@v8` on github.com | v8.0.1 | Same Enterprise Server limit: use the v3 line there |
+| `azure/login` | `@v3` | v3.1.0 | OIDC sign-in for Azure SQL (file 12) |
+| `ServiceNow/servicenow-devops-change` | Take from its repository's tags | v7.1.0 is the newest tag; the README examples still show v6.1.0 | Change request gate (file 30). Read the release notes before moving from the README's version |
+
+AI tool version floors named in files 03, 20 and 21, from each vendor's page: GitHub Copilot agent mode, MCP servers and agent skills in SSMS need SSMS 22.7 or later; MCP servers in Visual Studio need Visual Studio 2022 17.14 or later, or Visual Studio 2026; LM Studio is an MCP host from 0.3.17.
+
+## 3. How the versions fit together
+
+- Flyway Desktop and the Flyway engine version independently. Desktop is on its own 9.x line, and each Desktop release note names the engine build it bundles. Never infer one from the other.
+- The engine inside Flyway Desktop is a release-candidate build (for example `13.12.2-rc3200` in Desktop 9.11.5), so it can differ from the CLI on a workstation or runner. Never report a bundled release-candidate build as a released engine version, even when its number is higher than the newest engine release.
+- Release lines. Redgate's release notes and docs don't state which major lines get fixes. The engine release notes show no 12.x release after 12.11.0 (9 July 2026), and 13.0.0 shipped on 20 July 2026. Treat only the latest 13.x as patched unless Redgate Support says otherwise, and upgrade within 13.x rather than waiting for a 12.x fix.
+- Three places run the engine on your team: Desktop on workstations, the CLI on workstations, and the CLI on GitHub Actions runners. Pin the runner's engine version with the `version` input of the `red-gate/setup-flyway` action, and move workstation CLIs and the runner together in one pull request.
+- Keep the job that saves snapshots and the job that checks drift on the same engine version.
+- The CLI, the Docker image and the MCP server bundle their own Java runtime. The CLI has bundled Java 25 since engine 11.19.0, and the `redgate/flyway` Docker images have run on JRE 25 since engine 13.6.0. A project that embeds Flyway (the Java API, Maven or Gradle) needs Java JDK 17 or later on engine 13. Redgate's API (Java) page (updated 5 November 2026) says "Starting with Flyway v14, Java 21 will be required."
+- The comparison engine behind Flyway's advanced capabilities runs on .NET, and its .NET version has moved with the engine. The engine release notes say engine 10.1.0 moved to .NET 8 (dropping RHEL 7, affecting `check -changes` and `check -drift`) and engine 11.1.0 upgraded to .NET 9. Redgate's "Flyway V12 - updating from V11" guide (section 11) says Redgate Compare uses .NET 10 from engine 12.0.0; the 12.0.0 release note itself doesn't mention .NET. A custom Docker image that uses Enterprise features needs the .NET operating system dependencies for the engine it runs (section 8).
+- SQL Compare, SQL Data Compare and SQL Prompt have their own release notes and version lines (file 19).
+
+## 4. Preview labels
+
+Preview means Redgate labels the capability as not generally available. It can change between releases. Label these "(preview)" whenever you describe them.
+
+| Capability | Status | Covered in |
+|---|---|---|
+| Flyway MCP server | Preview (checked 10 November 2026). Redgate says tool names, parameters and behavior may change, or tools may be removed. The server fails to start unless at least one toolset is set with `-mcp.toolsets` (`develop_state`, `develop_migrations` or `all`) | File 20 |
+| Flyway Insights (deployments, drift, DORA metrics, business value) | Public preview for Flyway Enterprise. The Insights Deployments page (updated 1 October 2026) shows migrations-based deployments only; the DORA and ROI pages include state and migrations deployments | File 18 |
+| `docker`, `docker-compose`, `create-database`, `backup` and `snapshot` provisioners | Preview on their CLI reference pages (checked 19 October 2026). Flyway Desktop stopped labelling "Create empty" and Backup as preview in Desktop 9.6.5, and the Docker provisioner in Desktop 9.11.5. The `clean` provisioner has no preview label | File 16 |
+| Automated deployment page (Flyway Desktop) | Public preview from Desktop 9.6.5. No later release note takes it out of preview. From Desktop 9.11.4 it no longer needs a Git repository, and generates GitHub Actions workflows, Bash scripts and PowerShell scripts for any project | File 12 |
+| Flyway Desktop AI services (migration script descriptions and summaries, commit messages, "Explain this change") | Preview. They call Redgate's hosted AI service, which an organization setting in the Redgate Portal controls. They need Desktop 8.7.2 or later and an online license (offline permits don't work); "Explain this change" arrived in Desktop 9.9.1 | File 20 |
+| Schema model history (Flyway Desktop) | Preview, from Desktop 9.10.8 | File 08 |
+| Migration tags | Preview on the tags setting pages | File 09 |
+| Redgate Assistant and AI code completion in SQL Prompt | Preview | File 19 |
+| Object level history | Generally available from Desktop 9.10.7 per the release note; the roadmap still says Preview. Confirm on the docs page | File 08 |
+
+No required step in this library depends on a preview capability.
+
+## 5. Code review rules and SQLFluff
+
+The Redgate rules library runs from RG01 to RG23, and RG23 is the ceiling. Don't invent an RG24. Flyway bundles SQLFluff; don't quote its version, and ask the person to read their own `flyway check -code` output. The rules library page notes an operating-system floor for the bundled rules on Linux, so use a current runner image or your own SQLFluff install.
+
+## 6. Builds to avoid
+
+Never install or recommend these Flyway Desktop builds, which the Desktop 9 release notes mark as pulled: 9.7.2, 9.2.3, 9.2.4 and 9.2.5. The fixes from 9.2.3 shipped in 9.3.0. No later build was marked as pulled on 10 November 2026. If someone is on a pulled build, tell them to upgrade to the newest listed release.
+
+For the engine, avoid 12.8.0 when CI licenses with a personal access token: `FLYWAY_EMAIL` and `FLYWAY_TOKEN` weren't recognised there. Use 12.8.1 or later.
+
+## 7. Deprecations
+
+The Replacement column says where it comes from. "Library advice" means the release notes don't name a replacement and this library recommends one.
+
+| Setting or feature | Status | Replacement |
+|---|---|---|
+| `checkDriftOnMigrate` | Deprecated from engine 13.10.0; logs a warning when used. Nobody should enable it (file 18) | Not stated in the release notes. Library advice: run `flyway check -drift` as its own step |
+| `flywayServicePublish.publishReport` | Deprecated from engine 13.10.0; logs a warning when used | Not stated in the release notes. Library advice: `publishResult`, if you turn Insights on (file 18) |
+| `initSql` (environment setting) | Deprecated from engine 12.5.0. The V13 announcement said it would be removed; the docs still list it as deprecated, not removed | The `afterConnect` callback (`afterConnect.sql`). Use engine 13.1.0 or later, which fixed `afterConnect` not firing on the migration connection |
+| `createSchema` callback | Deprecated | `beforeCreateSchema` |
+| `licenseKey` (legacy license keys) | Deprecated; "will be removed in a future release" | A personal access token (`FLYWAY_EMAIL` and `FLYWAY_TOKEN`), `flyway auth` on a workstation, or an offline permit (file 04) |
+| `docker` provisioner configured with compose-file keys | Deprecated from engine 12.11.0, with a warning; the forwarding "will be removed in a future release" | The `docker-compose` provisioner (preview) |
+| `check.filterFile` | Supported for backwards compatibility, "will be deprecated" | `filterFile` under `[redgateCompare]` or the per-database compare table |
+| `[flywayDesktop] schemaModel` | Deprecated | `[flyway] schemaModelLocation` |
+| Redgate Clone provisioner and resolver | Removed from Flyway Desktop in 9.0.0; the Clone docs are marked deprecated | The `docker`, `backup` and `snapshot` provisioners (preview) |
+| Code review severity and policy settings from engine 11 (`check.majorRules`, `check.minorRules`, `check.majorTolerance`, `check.minorTolerance`, `passOnRegexMatch`) | Removed in engine 12.0.0 | Take current settings from the code review rules page, not from older examples |
+| `plugin` / `flyway.plugins` namespace, `cleanOnValidationError` | Removed in engine 12.0.0 | Move settings to current namespaces; see Redgate's deprecation page |
+
+## 8. Version floors and upgrade watch-outs
+
+Newest first. When someone upgrades, read only the items between their version and the target. Items are the ones that matter on SQL Server and Azure SQL; the release notes have the full list.
+
+Flyway Desktop, 9.10.7 and later:
+- Desktop 9.11.5: the Docker provisioner is no longer labelled preview in Desktop. Its CLI reference page still said preview when last checked (section 4).
+- Desktop 9.11.4: the Automated deployment page (preview) no longer needs a Git repository, and can generate GitHub Actions workflows, Bash scripts and PowerShell scripts for any project.
+- Desktop 9.11.0: the manual deployment page can check the target for drift before deploying. Drifted objects can be reviewed, then incorporated, filtered out, reverted or ignored.
+- Desktop 9.10.8: schema model history (preview). Development and target connections that use a provisioner which erases the database (Backup, Snapshot or Create Database) now ask "Ok to erase and rebuild".
+- Desktop 9.10.7 (the 14 October 2026 entry that had no number when first read): object level history out of preview. Nothing to configure.
+
+Flyway engine 13.x, with Desktop 9.0.0 to 9.10.6 in date order:
+- Engine 13.12.1: the migrate HTML report shows the right database version after a failed migration involving versions such as 1.9 and 1.10. Maven and Gradle plugins can load TOML files through `configFiles` (relevant only if you embed Flyway).
+- Engine 13.12.0: the check report warns when drifted objects will also be changed by the deployment. SQL Server drift incorporate migrations include object existence checks. `msal4j` updated to 1.23.1.
+- Engine 13.11.1: distrusted CA certificates are blocked in the Java trust store of the bundled JREs and Docker images. Not stated in the notes, but expected: a connection or licensing call whose certificate chains to a CA the JRE now distrusts can start failing TLS validation.
+- Engine 13.11.0, behaviour change: `info` honours `baselineOnMigrate`, so migrations at or below `baselineVersion` show as `Below Baseline` or `Ignored` instead of `Pending`. Update any script or dashboard that counts `Pending`. This doesn't change the library's rule to keep `baselineOnMigrate` off on shared environments.
+- Engine 13.11.0, behaviour change: the `docker` provisioner (preview) builds SQL Server environments in a dedicated `flyway` database instead of `master`. Code review profiles can exclude individual regex rules by rule code, Code Review reports show the line with each violation, and command-line errors suggest running with `-X`. The Docker images upgrade their ca-certificates package at build time.
+- Engine 13.10.1: Flyway prints the name of the environment it's working on and warns when two environment names differ only by case. Check the printed name in the first pipeline run after upgrading.
+- Engine 13.10.0: plugin parameters such as `check.buildEnvironment` and `undoSqlMigrationPrefix` can be set per environment under `[environments.<name>.flyway]`. Prove it on your engine before a pipeline relies on it. This is also the floor for publishing to Flyway Insights from chosen environments only (`publishResult = false` under `[flyway]`, `publishResult = true` under `[environments.<name>.flyway]`): use an engine later than 13.10.0, and test on your exact version that a non-production run publishes nothing (file 18). `checkDriftOnMigrate` and `flywayServicePublish.publishReport` deprecated (section 7). Fixed: SQL Server clean mode configuration could make operations fail on databases without clean mode support.
+- Desktop 9.10.5: surrounding double quotes are stripped from JDBC URLs pasted into connection dialogs, and the Migrations page shows progress logs when a Flyway command completes.
+- Desktop 9.10.3: Desktop deletes log files older than a month when it starts. If you keep them as audit evidence, change Settings > Log retention.
+- Desktop 9.10.2: publishing to Flyway Insights can be switched on from project settings. Read the data policy in file 18 first. AI-generated migration descriptions (preview) are capped at 50 characters.
+- Engine 13.9.0: Flyway no longer inherits the operating system proxy by default (`FLYWAY_USE_SYSTEM_PROXIES` defaults to false). Machines behind a proxy lose licensing and update calls until you set it to true or set the proxy in `JAVA_ARGS`. On Linux runners and the Docker image, use `JAVA_ARGS`.
+- Engine 13.9.0: Flyway Report has a new implementation, on by default. `FLYWAY_NEW_REPORTS=false` restores the legacy report for anything that parses it. Flyway no longer reports "successfully rolled back" when the rollback itself threw, so treat that message on older engines with care.
+- Engine 13.9.0: `init` no longer writes the root `redgateCompare.filterFile` setting for SQL Server projects.
+- Engine 13.8.0: connections report the application name `Redgate_Flyway` (it was "Flyway by Redgate"). Update any Redgate Monitor filter, audit rule or logon trigger keyed on the old name (file 19). Drift results are published to Insights for any drift check when `publishResult` is on.
+- Desktop 9.10.0: deploying from Flyway Desktop saves a snapshot by default. The CLI is unchanged: `deploy.saveSnapshot` defaults to false, so a hand-written pipeline sets it or runs `flyway snapshot` (file 14).
+- Engine 13.7.0: generated migration filename timestamps use UTC, not local time. With parallel branches across time zones, check ordering with `info` before merging (file 09). The same release stopped drift results being published to Insights when `publishResult` is false, and dry runs no longer publish migrate events as deployments.
+- Engine 13.6.0: after upgrading a workstation across 13.6.0, run `flyway auth` once more. Runners using `FLYWAY_EMAIL` and `FLYWAY_TOKEN` are unaffected. The `docker` provisioner (preview) rejects `url`, `user` and `password` on its environment. The JSON report has a top-level `schemaVersion`. The Docker images run on JRE 25 (section 3). Dry run scripts (`check -dryrun` or `-dryRunOutput`) add a deployment overview table. The release notes say `deploy` publishes to Flyway Insights from this version, but the Insights Deployments page shows migrations-based deployments only (section 4).
+- Engine 13.5.0: the MCP tool `create_before_pull_snapshot` was renamed `create_schema_model_checkpoint`. The release notes say debug output (`-X`) shows final configuration values and where each came from. On 13.12.1, a `flyway info -X` that failed to connect didn't print those origins, so don't rely on it until you've seen it on your engine.
+- Engine 13.4.0: the CLI and Docker image used the operating system proxy automatically. Reversed in 13.9.0.
+- Engine 13.2.0, breaking: JSON results with timestamps include a UTC offset, and reports aren't compatible with earlier versions. Update anything that parses JSON timestamps. The same release fixed environment-level settings (such as a custom history table or default schema) being lost when switching environment. The MCP server (preview) no longer errors when a `.conf` project exists outside the project root.
+- Engine 13.1.0: the `environments_<name>_<setting>` and `flyway_<setting>` environment variable prefixes accept any casing. Fixed `afterConnect` not firing on the migration connection, and several `after*OperationFinish` SQL callbacks never running. If you rely on `afterConnect`, use 13.1.0 or later.
+- Engine 13.0.0: the first release that carries the Flyway MCP server (preview). The release notes list no breaking changes. Drift and changes JSON gain an `id` per difference.
+- Desktop 9.9.1: "Explain this change" in object level history, one of Desktop's AI services (preview, section 4).
+- Desktop 9.5.0: the choice between state-based and migrations-based deployment moved from project creation to the Deployment page. The Automated deployment page can generate GitHub Actions workflows with manual approval (the page became public preview in 9.6.5; section 4).
+- Desktop 9.4.2: the Automated deployment page generates GitHub Actions workflows (public preview from 9.6.5; section 4).
+- Desktop 9.3.3: the code review panel offers "Apply fix" for issues that have a suggested fix.
+- Desktop 9.3.0: advanced capabilities work with SQL Server Kerberos authentication. This first shipped in 9.2.3, which was pulled (section 6), so 9.3.0 is the floor.
+- Desktop 9.2.0: a code review panel on the Generate migrations and deployment script screens, introduced as preview. No release note seen takes it out of preview, so check its label in your Desktop.
+- Desktop 9.0.0, breaking: the preview Redgate Clone provisioner and resolver were removed from the connection dialogs. Migrations projects got a dedicated Deploy page.
+
+Flyway engine, 12.x point releases:
+- Engine 12.11.0: `flyway auth` without `-IAgreeToTheEula` starts an interactive EULA prompt outside CI. Always pass `-IAgreeToTheEula` in scripts. Configuring the `docker` provisioner with compose-file keys is deprecated.
+- Engine 12.10.0: the preview `docker` provisioner was renamed `docker-compose`, and a new `docker` provisioner (preview) with `keepAlive` took its name. Missing callback locations are skipped.
+- Engine 12.9.0: when Flyway throws an error, the CLI can exit with a distinct code derived from the error code, not only `1`. Treat any non-zero exit code as a failure, and branch only on `35` (licensing) (file 22).
+- Engine 12.8.1: fixed `FLYWAY_EMAIL` and `FLYWAY_TOKEN` not being recognised for personal access token licensing in 12.8.0. Use 12.8.1 or later (section 6).
+- Engine 12.8.0: offline permits warn when they're within 30 days of expiry.
+- Engine 12.6.2: the `${env.X}` resolver works in all Flyway configuration parameters, not just environment connection properties.
+- Engine 12.6.0: `flyway auth` defers to an existing license, and the license output reports how it was acquired: the "Licensed via:" line near the top of `flyway version` output names the licensing method. Errors for configuration that contains only obsolete parameters are now `ObsoleteConfigurationParametersException`. Mixing scoped and unscoped namespaces on the command line is allowed.
+- Engine 12.5.0: `initSql` deprecated (section 7). Azure Key Vault resolver added (section 2).
+- Engine 12.2.0: "Code Analysis" was renamed "Code Review" in `check` output, so update any pipeline that matches the old text. `check -code` also writes SARIF 2.1.0. The regex rule engine no longer converts line endings before applying rules, so check regex rules against `\r\n` files.
+- Engine 12.1.0: the snapshot history limit defaults to 5. The SQL Server comparison option `IgnoreSynonymDependencies` was removed (also from Desktop 9.1.1); remove it from `flyway.toml` if present.
+- Engine 12.0.2: `check` honours an environment's own `cleanDisabled` override when the build environment has no provisioner. The build environment needs a `provisioner` or `cleanDisabled = false`, and `cleanDisabled = false` belongs only on build, shadow and scratch environments.
+
+Engine 12.0.0 (28 January 2026), breaking changes from 11. Redgate's guide is "Flyway V12 - updating from V11" (section 11).
+
+| Change | Who is affected | What to do |
+|---|---|---|
+| `REDGATE_LICENSING_PERMIT_PATH` removed for the engine | Offline-permit (air-gapped) CI | Use `FLYWAY_OFFLINE_PERMIT_PATH` or `offlinePermitPath`. Same file contents. Flyway Desktop's own offline licensing still uses the old variable (file 04) |
+| `plugin` / `flyway.plugins` namespace removed | Old configurations | Move settings to current namespaces |
+| `cleanOnValidationError` removed | Old configurations | Remove it |
+| Code analysis: `check.majorRules`, `minorRules`, `majorTolerance`, `minorTolerance` and the `passOnRegexMatch` regex field removed; the default Redgate regex ruleset is no longer shipped (replaced by SQLFluff rules); SQLFluff before 1.3 unsupported | `check -code` users | Move severity settings into the SQLFluff configuration (file 13). Flyway Enterprise has a built-in SQLFluff |
+| Reports no longer keep a history (no timestamp dropdown) | Anyone relying on report history | Archive each run's report as a pipeline artifact |
+| Redgate's comparison engine runs on .NET 10 (stated in the "Flyway V12 - updating from V11" guide, not in the 12.0.0 release note; earlier engines used .NET 8 from 10.1.0 and .NET 9 from 11.1.0, section 3) | Custom Docker images that use Enterprise features | Install the .NET 10 operating system dependencies |
+| `CommandExtension` signature changed; `CompositeResult` is a record | Java API and plugin authors | Rebuild extensions |
+
+## 9. How to check what you're running
+
+| Tool | How |
+|---|---|
+| Flyway CLI | `flyway version` (or `flyway --version`), and read the edition it reports. `-outputType=json` gives `"edition" : "ENTERPRISE"` |
+| Flyway Desktop | The About entry in Flyway Desktop's Help menu (confirm the menu wording in your build). The Desktop release notes name the bundled engine build |
+| GitHub Actions runner | Run `flyway version` as the first step of the job |
+| SQL Compare, SQL Data Compare | Help > About in each tool |
+| SQL Prompt | The About entry in SQL Prompt's menu in SSMS or Visual Studio |
+
+## 10. In daily use
+
+- Monthly, one engineer compares the team's pinned versions with section 2 and opens an upgrade pull request if needed, reading section 8 first. The watch-outs are a summary, not a substitute for the release notes.
+- After a Desktop upgrade, check which engine build it bundles before comparing behavior with the runner.
+
+## 11. Pages to re-check
+
+1. Flyway engine release notes: https://documentation.red-gate.com/flyway/release-notes-and-older-versions/release-notes-for-flyway-engine
+2. Flyway Desktop 9 release notes: https://documentation.red-gate.com/flyway/release-notes-and-older-versions/flyway-desktop-9-release-notes (also served at https://documentation.red-gate.com/fd/flyway-desktop-9-release-notes-329778435.html)
+3. Supported databases and versions: https://documentation.red-gate.com/flyway/getting-started-with-flyway/system-requirements/supported-databases-and-versions
+4. Redgate SQLFluff rules library: https://documentation.red-gate.com/flyway/reference/code-review-rules/redgate-sqlfluff-rules-library
+5. Flyway MCP server: https://documentation.red-gate.com/fd/flyway-mcp-server-350192418.html
+6. Flyway Insights: https://documentation.red-gate.com/fd/flyway-insights-367919120.html
+7. Provisioner setting: https://documentation.red-gate.com/fd/environment-provisioner-setting-277578930.html
+8. AI services in Flyway: https://documentation.red-gate.com/fd/ai-services-in-flyway-317496573.html
+9. Flyway V12 - updating from V11: https://documentation.red-gate.com/fd/flyway-v12-updating-from-v11-329777771.html
+10. Flyway roadmap: https://www.red-gate.com/products/flyway/roadmap/
+11. SQL Compare release notes: https://documentation.red-gate.com/sc16/release-notes-and-other-versions/sql-compare-16-1-release-notes
+12. SQL Data Compare release notes: https://documentation.red-gate.com/sdc16/release-notes-and-other-versions/sql-data-compare-16-1-release-notes
+13. SQL Prompt release notes: https://documentation.red-gate.com/sp11/release-notes-and-other-versions/sql-prompt-11-5-release-notes
+14. GitHub Actions: https://github.com/red-gate/setup-flyway and https://github.com/red-gate/flyway-actions
+
+## 12. Announced, not released
+
+From the Flyway roadmap page, checked 10 November 2026. None of this is released, and the page gives no dates. Never plan work, or tell anyone a feature is coming, on the strength of this list.
+
+| Item | Roadmap status |
+|---|---|
+| AI integrations, including instruction (md) files and skills | In development |
+| Flyway Insights Operational Deployment Dashboard improvements (better estate views) and a compliance view | In development. The current dashboard is preview |
+| Running code reviews when saving to the schema model; pre-deployment impact analysis checks; multi-target drift reporting and resolution; deeper Redgate Monitor integration; enhanced audit; additional AI capabilities; full comparison support for Microsoft Fabric | Researching |
+
+## 13. Instructions for the AI assistant using this file
+
+- This is the only file you may quote a current version or preview status from. If another file seems to state one, prefer this file and tell the person about the conflict.
+- Always give the date with a version, for example "engine 13.12.1, checked 10 November 2026". For Flyway Desktop, say 9.11.5 was the newest release on that date.
+- If today is more than about a month after 10 November 2026, say the version may have moved and give the release notes link from section 11 instead of asserting it.
+- Never describe a Desktop-bundled release-candidate build (such as `13.12.2-rc3200`) as an engine release, never cite a version from example output on a docs page, never quote 13.10.2 (removed from the release notes), and never suggest a pulled build or an unpinned runner version.
+- When someone asks about upgrading, ask for their current version first, then list only the section 8 items between it and the target.
+- Where section 7 says "library advice", say the replacement is this library's recommendation, not a Redgate statement.
+- Treat section 12 as announcements only. Don't predict dates or describe how an unreleased feature will work; for anything further, suggest the Redgate account team.
+- Never quote the bundled SQLFluff version. Point people at their own `flyway check -code` output.
+- Label preview capabilities "(preview)" every time.
+- Answer in the language the person writes in. Keep versions, commands and keys in English.
